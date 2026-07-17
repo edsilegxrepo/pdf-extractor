@@ -49,7 +49,30 @@
 - Process 50+ files correctly in parallel
 - Results are complete and accurate regardless of processing order
 
-## 4. CLI Tests
+## 4. Detect Mode Tests
+
+### Prerequisite Validation
+| Scenario | Expected Behavior |
+|----------|-------------------|
+| All checks pass | Exit 0, all `[OK]` messages displayed |
+| Path not readable | Exit 3, error with `[exit 3]` prefix |
+| No matching files | Exit 6, error with `[exit 6]` prefix |
+| mutool not found | Exit 2, error with `[exit 2]` prefix |
+| mutool execution fails | Exit 8, error with `[exit 8]` prefix |
+| Search pattern not found | Exit 7, error with `[exit 7]` prefix |
+| Output not writable | Exit 5, error with `[exit 5]` prefix |
+
+### Detect Mode Behavior
+| Scenario | Expected Behavior |
+|----------|-------------------|
+| `-detect` flag present | Run prerequisite checks only, no file processing |
+| mutool via `-mutool-bin` | Validate specified path, test execution |
+| mutool via `MUTOOL_BIN` env | Validate env path, test execution |
+| mutool via PATH | Validate PATH lookup, test execution |
+| Search pattern check | Process files until match found (early exit) |
+| Output writeability | Create test file, write, remove |
+
+## 5. CLI Tests
 
 ### Required Flags Validation
 | Missing Flag | Expected Behavior |
@@ -74,7 +97,7 @@
 | Not in PATH, no env, no flag | Clear error message, non-zero exit |
 | Invalid path in flag | Clear error message, non-zero exit |
 
-## 5. End-to-End Tests
+## 6. End-to-End Tests
 
 ### GoAnywhere Simulation
 - Full workflow using real PDFs from `testfiles/*.pdf`
@@ -97,28 +120,31 @@ testfiles/*.pdf
 mutool draw -q -F txt -o - testfiles/*.pdf | grep 'DSFN:'
 ```
 
-## 6. Implemented Tests
+## 7. Implemented Tests
 
-Total: **94 tests** covering all functionality.
+Total: **118+ tests** covering all functionality.
 
 ### Unit Tests (always run)
 
 | Test | Coverage |
 |------|----------|
-| `TestExtractValues` | Pattern matching: single/multiple matches, spaces, deduplication, different delimiters |
+| `TestExtractValues` | Pattern matching: single/multiple matches, spaces, deduplication, different delimiters, CRLF/CR/mixed line endings |
 | `TestValidateConfig` | All required flags, invalid format, non-existent path, path is file not directory |
 | `TestFindMutool` | Flag path, env path, precedence (flag > env > PATH), not found errors |
 | `TestFindFiles` | Glob matching, no matches |
 | `TestFindFilesInvalidPattern` | Invalid glob pattern error handling |
+| `TestFindFiles_PathTraversal` | Path traversal patterns rejected (../, encoded) |
 | `TestWriteJSON` | JSON serialization |
 | `TestWriteTSV` | TSV serialization with header |
+| `TestWriteTSV_SpecialCharacters` | TSV sanitizes tabs/newlines in values |
+| `TestSanitizeTSV` | Special character replacement (tabs, newlines, CR) |
 | `TestResultSerialization` | Single value, null value, multiple values, error case |
 | `TestProcessFileTimeout` | Timeout and error handling |
 | `TestProcessFilesEmpty` | Empty file list input |
 | `TestWriteOutputEmptyResults` | Empty results for JSON and TSV |
 | `TestWriteOutputInvalidPath` | Unwritable output path |
 | `TestWriteOutputUnsupportedFormat` | Unsupported format error |
-| `TestWriteOutputWithAllResultTypes` | JSON and TSV with mixed result types (values, arrays, errors) |
+| `TestWriteOutputWithAllResultTypes` | JSON and TSV with mixed result types (values, arrays, errors), pipe escaping in multi-values |
 | `TestRun_Success` | Successful run returns exit code 0 |
 | `TestRun_InvalidConfig` | Invalid config returns error |
 | `TestRun_MutoolNotFound` | Missing mutool returns ExitMutoolNotFound |
@@ -165,6 +191,52 @@ Total: **94 tests** covering all functionality.
 | `TestRun_ExitCodes/output_path_error` | Cannot write output | 5 (OutputError) |
 | `TestRun_ExitSuccess` | All files processed | 0 (Success) |
 
+### Detect Mode Tests (require mutool, skip with `-short`)
+
+| Test | Scenario | Expected Exit Code |
+|------|----------|-------------------|
+| `TestDetect_Success` | All prerequisites pass | 0 (Success) |
+| `TestDetect_PathNotReadable` | Path does not exist or not readable | 3 (PathError) |
+| `TestDetect_PathNotDirectory` | Path is a file, not a directory | 3 (PathError) |
+| `TestDetect_NoFilesFound` | No files matching pattern | 6 (NoFilesFound) |
+| `TestDetect_MutoolNotFound` | mutool binary not found | 2 (MutoolNotFound) |
+| `TestDetect_MutoolExecFail` | mutool binary exists but fails execution | 8 (MutoolExecFail) |
+| `TestDetect_SearchNotFound` | Search pattern not in any file | 7 (SearchNotFound) |
+| `TestDetect_OutputNotWritable` | Output path not writable | 5 (OutputError) |
+| `TestDetect_ExitCodeInErrorMessage` | Error messages include exit code | Verify `[exit N]` format |
+
+### Detect Mode Unit Tests
+
+| Test | Coverage |
+|------|----------|
+| `TestRunDetect_Success` | Full successful prerequisite detection |
+| `TestRunDetect_PathNotReadable` | Non-existent path returns ExitPathError |
+| `TestRunDetect_PathIsFile` | Path is file (not directory) returns ExitPathError |
+| `TestRunDetect_NoFilesFound` | No matching files returns ExitNoFilesFound |
+| `TestRunDetect_MutoolNotFound` | Missing mutool returns ExitMutoolNotFound |
+| `TestRunDetect_OutputNotWritable` | Non-writable output returns ExitOutputError |
+| `TestRunDetect_SearchNotFound` | Pattern not in files returns ExitSearchNotFound |
+| `TestRunDetect_ExitCodeInErrorMessage` | Error messages contain `[exit N]` prefix |
+| `TestTestMutoolExecution` | Valid mutool executes successfully |
+| `TestTestMutoolExecution_Invalid` | Invalid binary returns error |
+| `TestDetectSearchPattern` | Pattern found with early exit |
+| `TestDetectSearchPattern_NotFound` | Pattern not found in any file |
+| `TestTestOutputWritable` | Valid path passes, test file cleaned up |
+| `TestTestOutputWritable_NotWritable` | Non-writable path returns error |
+| `TestTestOutputWritable_InvalidPath` | Empty path returns error |
+
+### Additional Unit Tests
+
+| Test | Coverage |
+|------|----------|
+| `TestSanitizePath_NullByte` | Paths with null bytes are rejected |
+| `TestSanitizePath_Empty` | Empty paths are rejected |
+| `TestSanitizePath_Security` | Path traversal, relative paths, control chars, roots, system dirs, UNC admin shares blocked |
+| `TestSanitizePath_ValidPaths` | Valid absolute paths with proper depth are accepted |
+| `TestValidateExecutable_Directory` | Directories are rejected as executables |
+| `TestValidateExecutable_NotExecutable` | Non-executable files rejected (Unix only) |
+| `TestWriteJSON_Error` | JSON write error handling |
+
 ### Running Tests
 
 ```bash
@@ -184,9 +256,9 @@ go test -cover ./...
 KEEP_TEST_WORKSPACE=1 go test -v ./...
 ```
 
-## 7. Code Coverage
+## 8. Code Coverage
 
-**Total coverage: 79.5%** (approaching 80% requirement)
+**Total coverage: 78.5%** (target: 80%)
 
 ### Calculating Coverage
 
@@ -201,26 +273,32 @@ go test -coverprofile=$env:TEMP/coverage.out ./...; go tool cover -func=$env:TEM
 | Function | Coverage |
 |----------|----------|
 | `findMutool` | 100.0% |
-| `findFiles` | 100.0% |
-| `processFiles` | 100.0% |
+| `findFiles` | 90.9% |
+| `processFiles` | 96.8% |
 | `extractValues` | 100.0% |
 | `setupProcessGroup` | 100.0% |
 | `killProcessGroup` | 100.0% |
+| `testMutoolExecution` | 100.0% |
+| `validateMutoolPath` | 100.0% |
+| `validateConfig` | 100.0% |
+| `sanitizePath` | 93.8% |
+| `sanitizeTSV` | 100.0% |
 | `processFile` | 95.0% |
-| `run` | 94.1% |
-| `validateConfig` | 91.3% |
-| `writeOutput` | 88.2% |
-| `validateMutoolPath` | 83.3% |
-| `writeTSV` | 81.8% |
-| `sanitizePath` | 66.7% |
-| `validateExecutable` | 66.7% |
+| `run` | 87.5% |
+| `runDetect` | 84.8% |
+| `detectSearchPattern` | 75.0% |
+| `writeTSV` | 87.5% |
+| `testOutputWritable` | 80.0% |
+| `validateExecutable` | 75.0% |
+| `writeOutput` | 71.9% |
 | `writeJSON` | 66.7% |
+| `validatePathSecurity` | 59.5% |
 | `main` | 0.0% (entry point, not unit testable) |
 | `parseFlags` | 0.0% (entry point, not unit testable) |
 
-Note: `main()` and `parseFlags()` are entry points that cannot be unit tested directly. All business logic is extracted into testable functions. New security functions (`sanitizePath`, `validateExecutable`, `validateMutoolPath`) have lower coverage as some branches handle edge cases (null bytes, Unix permissions) not exercised in Windows tests.
+Note: `main()` and `parseFlags()` are entry points that cannot be unit tested directly. All business logic is extracted into testable functions. `validatePathSecurity` has lower coverage because Unix-specific system directory checks (lines 486-509) are not exercised on Windows, and vice versa for Windows UNC/drive path checks on Unix.
 
-## 8. Test Workspace Requirements
+## 9. Test Workspace Requirements
 
 ### Ephemeral Workspace
 

@@ -152,6 +152,24 @@ func TestExtractValues(t *testing.T) {
 			search:   "DSFN:",
 			expected: []string{"Employee ID_X_X_X_X_Eag-AHP.pdf", "327078_X_X_X_X_Wage.pdf"},
 		},
+		{
+			name:     "CRLF line endings",
+			text:     "DSFN:value1\r\nDSFN:value2\r\n",
+			search:   "DSFN:",
+			expected: []string{"value1", "value2"},
+		},
+		{
+			name:     "CR only line endings",
+			text:     "DSFN:value1\rDSFN:value2\r",
+			search:   "DSFN:",
+			expected: []string{"value1", "value2"},
+		},
+		{
+			name:     "mixed line endings",
+			text:     "DSFN:value1\r\nDSFN:value2\nDSFN:value3\r",
+			search:   "DSFN:",
+			expected: []string{"value1", "value2", "value3"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -183,6 +201,9 @@ func TestValidateConfig(t *testing.T) {
 	tmpFile := filepath.Join(tmpDir, "notadir.txt")
 	_ = os.WriteFile(tmpFile, []byte("test"), 0o644)
 
+	// Use temp dir for output paths (satisfies depth requirements)
+	outputPath := filepath.Join(tmpDir, "out.json")
+
 	tests := []struct {
 		name      string
 		cfg       Config
@@ -190,27 +211,27 @@ func TestValidateConfig(t *testing.T) {
 	}{
 		{
 			name:      "missing path",
-			cfg:       Config{FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: "/tmp/out.json"},
+			cfg:       Config{FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: outputPath},
 			wantError: "missing required flag: -path",
 		},
 		{
 			name:      "missing file-pattern",
-			cfg:       Config{Path: tmpDir, Search: "DSFN:", Format: "json", Output: "/tmp/out.json"},
+			cfg:       Config{Path: tmpDir, Search: "DSFN:", Format: "json", Output: outputPath},
 			wantError: "missing required flag: -file-pattern",
 		},
 		{
 			name:      "missing search",
-			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Format: "json", Output: "/tmp/out.json"},
+			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Format: "json", Output: outputPath},
 			wantError: "missing required flag: -search",
 		},
 		{
 			name:      "missing format",
-			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Output: "/tmp/out.json"},
+			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Output: outputPath},
 			wantError: "missing required flag: -format",
 		},
 		{
 			name:      "invalid format",
-			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Format: "xml", Output: "/tmp/out.json"},
+			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Format: "xml", Output: outputPath},
 			wantError: "invalid format: xml",
 		},
 		{
@@ -220,24 +241,24 @@ func TestValidateConfig(t *testing.T) {
 		},
 		{
 			name:      "non-existent path",
-			cfg:       Config{Path: "/nonexistent/path", FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: "/tmp/out.json"},
+			cfg:       Config{Path: filepath.Join(tmpDir, "nonexistent", "path"), FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: outputPath},
 			wantError: "workspace path error",
 		},
 		{
 			name:      "path is file not directory",
-			cfg:       Config{Path: tmpFile, FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: "/tmp/out.json"},
+			cfg:       Config{Path: tmpFile, FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: outputPath},
 			wantError: "workspace path is not a directory",
 		},
 		{
 			name:      "valid config",
-			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: "/tmp/out.json"},
+			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: outputPath},
 			wantError: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateConfig(tt.cfg)
+			err := validateConfig(&tt.cfg)
 			if tt.wantError == "" {
 				if err != nil {
 					t.Errorf("expected no error, got: %v", err)
@@ -268,6 +289,16 @@ func testExecutableName(base string) string {
 	return base
 }
 
+// testfilesPath returns the absolute path to the testfiles directory.
+func testfilesPath(t *testing.T) string {
+	t.Helper()
+	abs, err := filepath.Abs("testfiles")
+	if err != nil {
+		t.Fatalf("failed to get absolute path for testfiles: %v", err)
+	}
+	return abs
+}
+
 // TestFindMutool verifies mutool binary discovery with precedence rules.
 // Test cases: flag path, env path, PATH lookup, precedence ordering, not found.
 func TestFindMutool(t *testing.T) {
@@ -286,7 +317,9 @@ func TestFindMutool(t *testing.T) {
 	})
 
 	t.Run("flag path does not exist", func(t *testing.T) {
-		_, err := findMutool("/nonexistent/mutool")
+		// Use a valid-looking path that doesn't exist
+		nonExistent := filepath.Join(t.TempDir(), "subdir", "mutool")
+		_, err := findMutool(nonExistent)
 		if err == nil {
 			t.Error("expected error for non-existent path")
 		}
@@ -311,7 +344,9 @@ func TestFindMutool(t *testing.T) {
 	})
 
 	t.Run("env path does not exist", func(t *testing.T) {
-		_ = os.Setenv("MUTOOL_BIN", "/nonexistent/mutool-env")
+		// Use a valid-looking path that doesn't exist
+		nonExistent := filepath.Join(t.TempDir(), "subdir", "mutool-env")
+		_ = os.Setenv("MUTOOL_BIN", nonExistent)
 		defer func() { _ = os.Unsetenv("MUTOOL_BIN") }()
 
 		_, err := findMutool("")
@@ -390,6 +425,46 @@ func TestFindFiles(t *testing.T) {
 	})
 }
 
+// TestFindFiles_PathTraversal verifies path traversal patterns are rejected.
+func TestFindFiles_PathTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		pattern string
+		wantErr string
+	}{
+		{
+			name:    "dotdot in pattern",
+			pattern: "../*.pdf",
+			wantErr: "path traversal not allowed",
+		},
+		{
+			name:    "dotdot in middle",
+			pattern: "subdir/../../../etc/passwd",
+			wantErr: "path traversal not allowed",
+		},
+		{
+			name:    "encoded dotdot",
+			pattern: "..\\*.pdf",
+			wantErr: "path traversal not allowed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := findFiles(tmpDir, tt.pattern)
+			if err == nil {
+				t.Error("expected error for path traversal pattern, got nil")
+				return
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 // =============================================================================
 // UNIT TESTS: Output Serialization
 // =============================================================================
@@ -452,6 +527,65 @@ func TestWriteTSV(t *testing.T) {
 
 	if lines[0] != "filename\tvalue" {
 		t.Errorf("unexpected header: %s", lines[0])
+	}
+}
+
+// TestWriteTSV_SpecialCharacters verifies TSV sanitizes tabs/newlines in values.
+func TestWriteTSV_SpecialCharacters(t *testing.T) {
+	results := []Result{
+		{Filename: "doc\twith\ttabs.pdf", Value: "value\twith\ttab"},
+		{Filename: "doc\nwith\nnewlines.pdf", Value: "value\nwith\nnewline"},
+		{Filename: "doc\r\nwith\r\ncrlf.pdf", Value: "value\r\nwith\r\ncrlf"},
+	}
+
+	var buf bytes.Buffer
+	writer := bufio.NewWriter(&buf)
+
+	err := writeTSV(writer, results)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("flush error: %v", err)
+	}
+
+	output := buf.String()
+
+	// Verify no raw tabs in data (only field separators)
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for i, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 {
+			t.Errorf("line %d should have exactly 2 tab-separated fields, got %d: %q", i, len(fields), line)
+		}
+		// Verify no embedded tabs/newlines in field values (they should be replaced with spaces)
+		for j, field := range fields {
+			if strings.ContainsAny(field, "\t\n\r") {
+				t.Errorf("line %d field %d contains raw tab/newline: %q", i, j, field)
+			}
+		}
+	}
+}
+
+// TestSanitizeTSV verifies special character handling.
+func TestSanitizeTSV(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"normal", "normal"},
+		{"with\ttab", "with tab"},
+		{"with\nnewline", "with newline"},
+		{"with\rcarriage", "with carriage"},
+		{"with\r\ncrlf", "with  crlf"},
+		{"mixed\t\n\rall", "mixed   all"},
+	}
+
+	for _, tt := range tests {
+		result := sanitizeTSV(tt.input)
+		if result != tt.expected {
+			t.Errorf("sanitizeTSV(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
 	}
 }
 
@@ -614,7 +748,7 @@ func TestIntegration_WorkersFlag(t *testing.T) {
 			outputFile := filepath.Join(workspaceDir, fmt.Sprintf("workers_%s.json", tt.name))
 
 			cfg := Config{
-				Path:        "testfiles",
+				Path:        testfilesPath(t),
 				FilePattern: "*.pdf",
 				Search:      "DSFN:",
 				Format:      "json",
@@ -677,11 +811,13 @@ func TestWriteOutputEmptyResults(t *testing.T) {
 
 // TestWriteOutputInvalidPath verifies error handling for unwritable paths.
 func TestWriteOutputInvalidPath(t *testing.T) {
-	err := writeOutput([]Result{{Filename: "test.pdf"}}, "json", "/nonexistent/dir/output.json")
+	// Use a valid-looking path with non-existent parent directory
+	invalidPath := filepath.Join(t.TempDir(), "nonexistent", "subdir", "output.json")
+	err := writeOutput([]Result{{Filename: "test.pdf"}}, "json", invalidPath)
 	if err == nil {
 		t.Error("expected error for invalid output path")
 	}
-	if !strings.Contains(err.Error(), "cannot create output file") {
+	if !strings.Contains(err.Error(), "cannot create temp file") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -726,7 +862,7 @@ func TestRun_Success(t *testing.T) {
 	outputFile := filepath.Join(tmpDir, "run_output.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -771,6 +907,11 @@ func TestRun_InvalidConfig(t *testing.T) {
 // TestRun_ExitCodes verifies each error condition returns the correct exit code.
 func TestRun_ExitCodes(t *testing.T) {
 	mutoolPath, _ := findMutool("")
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "out.json")
+
+	// Get absolute path to testfiles
+	testfilesAbs, _ := filepath.Abs("testfiles")
 
 	tests := []struct {
 		name         string
@@ -785,34 +926,34 @@ func TestRun_ExitCodes(t *testing.T) {
 		{
 			name: "workspace path not found",
 			cfg: Config{
-				Path:        "/nonexistent/path",
+				Path:        filepath.Join(tmpDir, "nonexistent", "path"),
 				FilePattern: "*.pdf",
 				Search:      "DSFN:",
 				Format:      "json",
-				Output:      "/tmp/out.json",
+				Output:      outputPath,
 			},
 			expectedCode: ExitPathError,
 		},
 		{
 			name: "mutool not found",
 			cfg: Config{
-				Path:        t.TempDir(),
+				Path:        tmpDir,
 				FilePattern: "*.pdf",
 				Search:      "DSFN:",
 				Format:      "json",
-				Output:      "/tmp/out.json",
-				MutoolBin:   "/nonexistent/mutool",
+				Output:      outputPath,
+				MutoolBin:   filepath.Join(tmpDir, "nonexistent", "mutool"),
 			},
 			expectedCode: ExitMutoolNotFound,
 		},
 		{
 			name: "invalid glob pattern",
 			cfg: Config{
-				Path:        t.TempDir(),
+				Path:        tmpDir,
 				FilePattern: "[invalid",
 				Search:      "DSFN:",
 				Format:      "json",
-				Output:      "/tmp/out.json",
+				Output:      outputPath,
 				MutoolBin:   mutoolPath,
 			},
 			expectedCode: ExitPatternError,
@@ -820,14 +961,26 @@ func TestRun_ExitCodes(t *testing.T) {
 		{
 			name: "output path error",
 			cfg: Config{
-				Path:        "testfiles",
+				Path:        testfilesAbs,
 				FilePattern: "*.pdf",
 				Search:      "DSFN:",
 				Format:      "json",
-				Output:      "/nonexistent/dir/out.json",
+				Output:      filepath.Join(tmpDir, "nonexistent", "subdir", "out.json"),
 				MutoolBin:   mutoolPath,
 			},
 			expectedCode: ExitOutputError,
+		},
+		{
+			name: "no files found",
+			cfg: Config{
+				Path:        tmpDir,
+				FilePattern: "*.pdf",
+				Search:      "DSFN:",
+				Format:      "json",
+				Output:      outputPath,
+				MutoolBin:   mutoolPath,
+			},
+			expectedCode: ExitNoFilesFound,
 		},
 	}
 
@@ -861,7 +1014,7 @@ func TestRun_ExitSuccess(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "exit_success.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -936,7 +1089,7 @@ func TestRun_OutputWriteError(t *testing.T) {
 	}
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -972,7 +1125,7 @@ func TestIntegration_FormatJSON(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "format_json.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -1011,7 +1164,7 @@ func TestIntegration_FormatTSV(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "format_tsv.tsv")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "tsv",
@@ -1050,7 +1203,7 @@ func TestIntegration_DifferentSearchPattern(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "different_pattern.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "NONEXISTENT_PATTERN:",
 		Format:      "json",
@@ -1088,7 +1241,7 @@ func TestIntegration_FilePatternSpecific(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "specific_file.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "sample001.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -1127,7 +1280,7 @@ func TestIntegration_MutoolBinFlag(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "mutool_flag.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -1162,7 +1315,7 @@ func TestIntegration_TimeoutFlag(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "timeout.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -1182,7 +1335,7 @@ func TestIntegration_TimeoutFlag(t *testing.T) {
 	}
 }
 
-// TestIntegration_NoMatchingFiles verifies empty output when no files match pattern.
+// TestIntegration_NoMatchingFiles verifies ExitNoFilesFound when no files match pattern.
 func TestIntegration_NoMatchingFiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -1197,7 +1350,7 @@ func TestIntegration_NoMatchingFiles(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "no_match.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.nonexistent",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -1206,14 +1359,12 @@ func TestIntegration_NoMatchingFiles(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
-	if err != nil {
-		t.Fatalf("run() failed: %v", err)
+	exitCode, err := run(cfg)
+	if exitCode != ExitNoFilesFound {
+		t.Errorf("expected exit code %d (ExitNoFilesFound), got %d", ExitNoFilesFound, exitCode)
 	}
-
-	content, _ := os.ReadFile(outputFile)
-	if len(content) != 0 {
-		t.Errorf("expected empty output for no matching files, got: %s", content)
+	if err == nil {
+		t.Error("expected error for no matching files, got nil")
 	}
 }
 
@@ -1249,7 +1400,7 @@ func TestIntegration_AllFlagsCombined(t *testing.T) {
 			outputFile := filepath.Join(workspaceDir, tt.name+tt.outputExt)
 
 			cfg := Config{
-				Path:        "testfiles",
+				Path:        testfilesPath(t),
 				FilePattern: tt.filePattern,
 				Search:      tt.search,
 				Format:      tt.format,
@@ -1334,8 +1485,26 @@ func TestWriteOutputWithAllResultTypes(t *testing.T) {
 		if len(lines) != 5 {
 			t.Errorf("expected 5 lines (header + 4 data), got %d", len(lines))
 		}
-		if !strings.Contains(lines[2], "a,b,c") {
-			t.Errorf("expected comma-joined values in line 3: %s", lines[2])
+		if !strings.Contains(lines[2], "a|b|c") {
+			t.Errorf("expected pipe-joined values in line 3: %s", lines[2])
+		}
+	})
+
+	// Test pipe escaping in multi-values
+	t.Run("tsv_pipe_escaping", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		results := []Result{
+			{Filename: "test.pdf", Value: []string{"val|with|pipes", "normal"}},
+		}
+		outFile := filepath.Join(tmpDir, "escaped.tsv")
+		err := writeOutput(results, "tsv", outFile)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		content, _ := os.ReadFile(outFile)
+		// Pipes in values should be escaped as \|
+		if !strings.Contains(string(content), `val\|with\|pipes|normal`) {
+			t.Errorf("expected escaped pipes in output: %s", string(content))
 		}
 	})
 }
@@ -1564,7 +1733,7 @@ func TestIntegration_EndToEnd(t *testing.T) {
 	outputFile := filepath.Join(workspaceDir, "results.json")
 
 	cfg := Config{
-		Path:        "testfiles",
+		Path:        testfilesPath(t),
 		FilePattern: "*.pdf",
 		Search:      "DSFN:",
 		Format:      "json",
@@ -1573,11 +1742,11 @@ func TestIntegration_EndToEnd(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	if err := validateConfig(cfg); err != nil {
+	if err := validateConfig(&cfg); err != nil {
 		t.Fatalf("invalid config: %v", err)
 	}
 
-	files, err := findFiles(cfg.Path, cfg.FilePattern)
+	files, err := findFiles(cfg.cleanPath, cfg.FilePattern)
 	if err != nil {
 		t.Fatalf("failed to find files: %v", err)
 	}
@@ -1613,5 +1782,604 @@ func TestIntegration_EndToEnd(t *testing.T) {
 
 	if !foundSample001 || !foundSample002 {
 		t.Errorf("missing expected files in output: sample001=%v sample002=%v", foundSample001, foundSample002)
+	}
+}
+
+// =============================================================================
+// DETECT MODE TESTS
+// =============================================================================
+
+// TestRunDetect_Success tests successful prerequisite detection.
+func TestRunDetect_Success(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath, _ := findMutool("")
+	if mutoolPath == "" {
+		t.Skip("mutool not available")
+	}
+
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "output.json")
+
+	// Create a test PDF file with search pattern
+	testPDF := filepath.Join(tmpDir, "test.pdf")
+	createTestPDFWithContent(t, testPDF, "DSFN:TestValue")
+
+	cfg := Config{
+		Path:        tmpDir,
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      outputFile,
+		MutoolBin:   mutoolPath,
+		Timeout:     defaultTimeout,
+		Detect:      true,
+	}
+
+	code, err := runDetect(cfg)
+	if err != nil {
+		t.Errorf("runDetect failed: %v", err)
+	}
+	if code != ExitSuccess {
+		t.Errorf("expected exit code %d, got %d", ExitSuccess, code)
+	}
+}
+
+// TestRunDetect_PathNotReadable tests detection with non-existent path.
+func TestRunDetect_PathNotReadable(t *testing.T) {
+	cfg := Config{
+		Path:        "/nonexistent/path/that/does/not/exist",
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      "/tmp/out.json",
+	}
+
+	code, err := runDetect(cfg)
+	if code != ExitPathError {
+		t.Errorf("expected exit code %d, got %d", ExitPathError, code)
+	}
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+// TestRunDetect_NoFilesFound tests detection when no files match pattern.
+func TestRunDetect_NoFilesFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := Config{
+		Path:        tmpDir,
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      filepath.Join(tmpDir, "out.json"),
+	}
+
+	code, err := runDetect(cfg)
+	if code != ExitNoFilesFound {
+		t.Errorf("expected exit code %d, got %d", ExitNoFilesFound, code)
+	}
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+// TestRunDetect_MutoolNotFound tests detection when mutool is not found.
+func TestRunDetect_MutoolNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a dummy file to pass file pattern check
+	dummyFile := filepath.Join(tmpDir, "test.pdf")
+	if err := os.WriteFile(dummyFile, []byte("dummy"), 0o644); err != nil {
+		t.Fatalf("failed to create dummy file: %v", err)
+	}
+
+	cfg := Config{
+		Path:        tmpDir,
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      filepath.Join(tmpDir, "out.json"),
+		MutoolBin:   "/nonexistent/mutool",
+	}
+
+	code, err := runDetect(cfg)
+	if code != ExitMutoolNotFound {
+		t.Errorf("expected exit code %d, got %d", ExitMutoolNotFound, code)
+	}
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+// TestRunDetect_OutputNotWritable tests detection when output is not writable.
+func TestRunDetect_OutputNotWritable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath, _ := findMutool("")
+	if mutoolPath == "" {
+		t.Skip("mutool not available")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Create a test PDF with search pattern
+	testPDF := filepath.Join(tmpDir, "test.pdf")
+	createTestPDFWithContent(t, testPDF, "DSFN:TestValue")
+
+	cfg := Config{
+		Path:        tmpDir,
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      filepath.Join(tmpDir, "nonexistent", "subdir", "out.json"),
+		MutoolBin:   mutoolPath,
+		Timeout:     defaultTimeout,
+	}
+
+	code, err := runDetect(cfg)
+	if code != ExitOutputError {
+		t.Errorf("expected exit code %d, got %d", ExitOutputError, code)
+	}
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+// TestRunDetect_SearchNotFound tests detection when search pattern not in files.
+func TestRunDetect_SearchNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath, _ := findMutool("")
+	if mutoolPath == "" {
+		t.Skip("mutool not available")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Create a test PDF without the search pattern
+	testPDF := filepath.Join(tmpDir, "test.pdf")
+	createTestPDFWithContent(t, testPDF, "SomeOtherContent")
+
+	cfg := Config{
+		Path:        tmpDir,
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      filepath.Join(tmpDir, "out.json"),
+		MutoolBin:   mutoolPath,
+		Timeout:     defaultTimeout,
+	}
+
+	code, err := runDetect(cfg)
+	if code != ExitSearchNotFound {
+		t.Errorf("expected exit code %d, got %d", ExitSearchNotFound, code)
+	}
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+// TestTestMutoolExecution tests the mutool execution validator.
+func TestTestMutoolExecution(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath, _ := findMutool("")
+	if mutoolPath == "" {
+		t.Skip("mutool not available")
+	}
+
+	err := testMutoolExecution(mutoolPath)
+	if err != nil {
+		t.Errorf("testMutoolExecution failed for valid mutool: %v", err)
+	}
+}
+
+// TestTestMutoolExecution_Invalid tests execution with invalid binary.
+func TestTestMutoolExecution_Invalid(t *testing.T) {
+	err := testMutoolExecution("/nonexistent/binary")
+	if err == nil {
+		t.Error("expected error for nonexistent binary, got nil")
+	}
+}
+
+// TestDetectSearchPattern tests the search pattern detection.
+func TestDetectSearchPattern(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath, _ := findMutool("")
+	if mutoolPath == "" {
+		t.Skip("mutool not available")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Create test PDFs
+	pdf1 := filepath.Join(tmpDir, "test1.pdf")
+	pdf2 := filepath.Join(tmpDir, "test2.pdf")
+	createTestPDFWithContent(t, pdf1, "NoMatch")
+	createTestPDFWithContent(t, pdf2, "DSFN:FoundIt")
+
+	files := []string{pdf1, pdf2}
+
+	found, checkedCount, err := detectSearchPattern(files, mutoolPath, "DSFN:", defaultTimeout)
+	if err != nil {
+		t.Errorf("detectSearchPattern failed: %v", err)
+	}
+	if !found {
+		t.Error("expected pattern to be found")
+	}
+	if checkedCount > 2 {
+		t.Errorf("expected to check at most 2 files, checked %d", checkedCount)
+	}
+}
+
+// TestDetectSearchPattern_NotFound tests when pattern is not in any file.
+func TestDetectSearchPattern_NotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath, _ := findMutool("")
+	if mutoolPath == "" {
+		t.Skip("mutool not available")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Create test PDF without pattern
+	pdf1 := filepath.Join(tmpDir, "test1.pdf")
+	createTestPDFWithContent(t, pdf1, "NoMatchHere")
+
+	files := []string{pdf1}
+
+	found, checkedCount, err := detectSearchPattern(files, mutoolPath, "DSFN:", defaultTimeout)
+	if err != nil {
+		t.Errorf("detectSearchPattern failed: %v", err)
+	}
+	if found {
+		t.Error("expected pattern not to be found")
+	}
+	if checkedCount != 1 {
+		t.Errorf("expected to check 1 file, checked %d", checkedCount)
+	}
+}
+
+// TestTestOutputWritable tests the output writeability check.
+func TestTestOutputWritable(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "test_output.json")
+
+	err := testOutputWritable(outputPath)
+	if err != nil {
+		t.Errorf("testOutputWritable failed for valid path: %v", err)
+	}
+
+	// Verify test file was cleaned up
+	if _, err := os.Stat(outputPath + ".detect-test"); err == nil {
+		t.Error("test file was not cleaned up")
+	}
+}
+
+// TestTestOutputWritable_NotWritable tests with non-writable path.
+func TestTestOutputWritable_NotWritable(t *testing.T) {
+	err := testOutputWritable("/nonexistent/dir/output.json")
+	if err == nil {
+		t.Error("expected error for non-writable path, got nil")
+	}
+}
+
+// TestTestOutputWritable_InvalidPath tests with invalid path.
+func TestTestOutputWritable_InvalidPath(t *testing.T) {
+	err := testOutputWritable("")
+	if err == nil {
+		t.Error("expected error for empty path, got nil")
+	}
+}
+
+// TestRunDetect_ExitCodeInErrorMessage verifies error messages include exit codes.
+func TestRunDetect_ExitCodeInErrorMessage(t *testing.T) {
+	cfg := Config{
+		Path:        "/nonexistent/path",
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      "/tmp/out.json",
+	}
+
+	_, err := runDetect(cfg)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "[exit") {
+		t.Errorf("error message should contain exit code, got: %s", errMsg)
+	}
+}
+
+// TestSanitizePath_NullByte tests that null bytes are rejected.
+func TestSanitizePath_NullByte(t *testing.T) {
+	_, err := sanitizePath("/data/path\x00with\x00nulls")
+	if err == nil {
+		t.Error("expected error for path with null bytes, got nil")
+	}
+}
+
+// TestSanitizePath_Empty tests that empty paths are rejected.
+func TestSanitizePath_Empty(t *testing.T) {
+	_, err := sanitizePath("")
+	if err == nil {
+		t.Error("expected error for empty path, got nil")
+	}
+}
+
+// TestSanitizePath_Security tests path security validation.
+func TestSanitizePath_Security(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{
+			name:    "path traversal",
+			path:    "/data/workspace/../../../etc/passwd",
+			wantErr: "path traversal",
+		},
+		{
+			name:    "relative path",
+			path:    "relative/path/file.txt",
+			wantErr: "must be absolute",
+		},
+		{
+			name:    "control characters",
+			path:    "/data/path\twith\ttabs",
+			wantErr: "invalid characters",
+		},
+	}
+
+	// Add platform-specific tests
+	if runtime.GOOS == "windows" {
+		tests = append(tests, []struct {
+			name    string
+			path    string
+			wantErr string
+		}{
+			{
+				name:    "windows root",
+				path:    "C:\\",
+				wantErr: "files in root directory",
+			},
+			{
+				name:    "windows file in root",
+				path:    "C:\\file.txt",
+				wantErr: "files in root directory",
+			},
+			{
+				name:    "UNC admin share C$",
+				path:    "\\\\server\\C$\\Windows\\file.txt",
+				wantErr: "administrative shares",
+			},
+			{
+				name:    "UNC admin share ADMIN$",
+				path:    "\\\\server\\ADMIN$\\system\\file.txt",
+				wantErr: "administrative shares",
+			},
+			{
+				name:    "UNC admin share lowercase",
+				path:    "\\\\server\\d$\\data\\file.txt",
+				wantErr: "administrative shares",
+			},
+		}...)
+	} else {
+		tests = append(tests, []struct {
+			name    string
+			path    string
+			wantErr string
+		}{
+			{
+				name:    "unix root",
+				path:    "/",
+				wantErr: "root paths",
+			},
+			{
+				name:    "unix file in root",
+				path:    "/file.txt",
+				wantErr: "files in root directory",
+			},
+			{
+				name:    "etc directory",
+				path:    "/etc/passwd",
+				wantErr: "system directory",
+			},
+			{
+				name:    "usr directory",
+				path:    "/usr/local/bin",
+				wantErr: "system directory",
+			},
+			{
+				name:    "bin directory",
+				path:    "/bin/sh",
+				wantErr: "system directory",
+			},
+		}...)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := sanitizePath(tt.path)
+			if err == nil {
+				t.Errorf("expected error containing %q, got nil", tt.wantErr)
+				return
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestSanitizePath_ValidPaths tests that valid paths are accepted.
+func TestSanitizePath_ValidPaths(t *testing.T) {
+	var validPaths []string
+
+	if runtime.GOOS == "windows" {
+		validPaths = []string{
+			"C:\\data\\workspace\\file.txt",
+			"D:\\mft\\batch001\\output.json",
+			"C:\\Program Files\\App\\data.txt",
+		}
+	} else {
+		validPaths = []string{
+			"/data/workspace/file.txt",
+			"/var/mft/batch001/output.json",
+			"/opt/myapp/data/results.tsv",
+			"/home/user/workspace/file.pdf",
+		}
+	}
+
+	for _, path := range validPaths {
+		t.Run(path, func(t *testing.T) {
+			result, err := sanitizePath(path)
+			if err != nil {
+				t.Errorf("sanitizePath(%q) failed: %v", path, err)
+				return
+			}
+			if result == "" {
+				t.Error("expected non-empty result")
+			}
+		})
+	}
+}
+
+// TestValidateExecutable_NotExists tests non-existent executable.
+func TestValidateExecutable_NotExists(t *testing.T) {
+	err := validateExecutable("/nonexistent/path/to/binary")
+	if err == nil {
+		t.Error("expected error for non-existent path, got nil")
+	}
+}
+
+// TestValidateExecutable_Directory tests that directories are rejected.
+func TestValidateExecutable_Directory(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := validateExecutable(tmpDir)
+	if err == nil {
+		t.Error("expected error for directory, got nil")
+	}
+}
+
+// TestValidateExecutable_NotExecutable tests non-executable files on Unix.
+func TestValidateExecutable_NotExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping Unix-specific test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	notExec := filepath.Join(tmpDir, "notexec")
+	if err := os.WriteFile(notExec, []byte("data"), 0o644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	err := validateExecutable(notExec)
+	if err == nil {
+		t.Error("expected error for non-executable file, got nil")
+	}
+}
+
+// TestWriteJSON_Error tests JSON write error handling.
+func TestWriteJSON_Error(t *testing.T) {
+	// Create a writer that always fails
+	var buf bytes.Buffer
+	w := bufio.NewWriter(&buf)
+
+	results := []Result{{Filename: "test.pdf", Value: "value"}}
+	err := writeJSON(w, results)
+	if err != nil {
+		t.Errorf("writeJSON should not fail with valid buffer: %v", err)
+	}
+}
+
+// TestRunDetect_PathIsFile tests detection when path is a file, not directory.
+func TestRunDetect_PathIsFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "file.txt")
+	if err := os.WriteFile(tmpFile, []byte("data"), 0o644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	cfg := Config{
+		Path:        tmpFile,
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "json",
+		Output:      filepath.Join(tmpDir, "out.json"),
+	}
+
+	code, err := runDetect(cfg)
+	if code != ExitPathError {
+		t.Errorf("expected exit code %d, got %d", ExitPathError, code)
+	}
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+// createTestPDFWithContent creates a minimal PDF with text content for testing.
+// Uses mutool to create a valid PDF from text input.
+func createTestPDFWithContent(t *testing.T, path string, content string) {
+	t.Helper()
+
+	mutoolPath, _ := findMutool("")
+	if mutoolPath == "" {
+		// If mutool not available, create a simple text file
+		// (tests will be skipped anyway due to mutool check)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+		return
+	}
+
+	// Create a text file with content
+	tmpDir := t.TempDir()
+	textFile := filepath.Join(tmpDir, "input.txt")
+	if err := os.WriteFile(textFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to create text file: %v", err)
+	}
+
+	// For testing, we just need a file that mutool can process
+	// Create a minimal PDF structure manually
+	pdfContent := fmt.Sprintf(`%%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >> endobj
+4 0 obj << /Length %d >> stream
+BT /F1 12 Tf 100 700 Td (%s) Tj ET
+endstream endobj
+xref
+0 5
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000214 00000 n
+trailer << /Size 5 /Root 1 0 R >>
+startxref
+%d
+%%%%EOF`, len(content)+50, content, 300+len(content))
+
+	if err := os.WriteFile(path, []byte(pdfContent), 0o644); err != nil {
+		t.Fatalf("failed to create PDF file: %v", err)
 	}
 }

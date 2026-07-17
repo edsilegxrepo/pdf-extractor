@@ -57,20 +57,81 @@ All user-supplied inputs are sanitized:
 
 | Input | Sanitization Method |
 |-------|---------------------|
-| `-path` | `filepath.Clean()`, `filepath.Abs()`, null byte rejection |
-| `-output` | `filepath.Clean()`, `filepath.Abs()`, null byte rejection |
+| `-path` | Path security validation (see below) |
+| `-output` | Path security validation (see below) |
 | `-mutool-bin` | Path sanitization + executable validation |
 | `MUTOOL_BIN` env | Path sanitization + executable validation |
-| `-file-pattern` | Passed to `filepath.Glob()` which validates syntax |
+| `-file-pattern` | Passed to `filepath.Glob()` which validates syntax; `..` blocked |
 
-### 2.7 Subprocess Security
+### 2.7 Path Security
+
+All filesystem paths (`-path`, `-output`) are validated against strict security rules to prevent path traversal attacks and writes to sensitive system locations.
+
+#### Validation Rules
+
+| Rule | Description |
+|------|-------------|
+| Absolute paths only | Relative paths are rejected |
+| No path traversal | Paths containing `..` are rejected |
+| No control characters | ASCII 0-31 (null bytes, tabs, etc.) are rejected |
+| No root-level files | Files directly in `/` or `C:\` are rejected |
+| No system directories | Linux system paths are blocked (see below) |
+
+#### Blocked System Directories (Linux)
+
+| Directory | Reason |
+|-----------|--------|
+| `/etc` | System configuration |
+| `/usr` | System binaries and libraries |
+| `/bin` | Essential system binaries |
+| `/sbin` | System administration binaries |
+| `/boot` | Boot loader files |
+| `/sys` | Kernel/system interface |
+| `/proc` | Process information |
+
+#### Path Examples
+
+**BLOCKED paths:**
+
+| Path | Reason |
+|------|--------|
+| `relative/path` | Not absolute |
+| `../etc/passwd` | Path traversal |
+| `/data/../etc/passwd` | Path traversal |
+| `/data/file\x00.txt` | Null byte |
+| `/` | Root directory |
+| `/file.txt` | File in root (no subdirectory) |
+| `/etc/passwd` | System directory |
+| `/usr/local/bin/app` | System directory |
+| `/bin/sh` | System directory |
+| `C:\` | Windows root |
+| `C:\file.txt` | File in Windows root |
+| `\\server\C$\file.txt` | UNC admin share (C$) |
+| `\\server\ADMIN$\file.txt` | UNC admin share (ADMIN$) |
+
+**ALLOWED paths:**
+
+| Path | Reason |
+|------|--------|
+| `/data/file.txt` | Absolute, 2+ segments, not system |
+| `/var/mft/output.json` | `/var` is allowed |
+| `/opt/app/data.csv` | `/opt` is allowed |
+| `/home/user/work/file.pdf` | User directory |
+| `/tmp/output.json` | Temp directory |
+| `C:\data\file.txt` | Windows with subdirectory |
+| `D:\mft\batch\out.json` | Windows multi-level |
+| `\\server\share\file.txt` | UNC path |
+| `/data/my-file_v2.pdf` | Special chars in filename OK |
+| `C:\Program Files\App\data.txt` | Spaces OK |
+
+### 2.8 Subprocess Security
 
 - mutool binary path is validated as an executable before invocation
 - Subprocesses run in isolated process groups for clean termination
 - Context-based timeouts prevent runaway processes
 - No shell interpretation of arguments (direct exec, not shell command)
 
-### 2.8 Libraries and Vulnerabilities
+### 2.9 Libraries and Vulnerabilities
 
 **Go Standard Library Only**: The application uses exclusively Go standard library packages with no third-party dependencies. This minimizes supply chain risk and ensures security patches are delivered through Go runtime updates.
 
@@ -82,7 +143,7 @@ All user-supplied inputs are sanitized:
 
 **Vulnerability Scanning**: The codebase passes `govulncheck` with no known vulnerabilities in dependencies.
 
-### 2.9 Privilege Requirements
+### 2.10 Privilege Requirements
 
 The application requires only standard user privileges:
 
@@ -94,7 +155,7 @@ The application requires only standard user privileges:
 
 **No elevated privileges required**: The application does not require root/Administrator access for normal operation.
 
-### 2.10 Static Analysis Results
+### 2.11 Static Analysis Results
 
 The codebase passes security static analysis with justified exceptions:
 
@@ -175,6 +236,7 @@ go-pdf-extract [OPTIONS]
 | `-mutool-bin` | string | Auto-detect | Explicit path to mutool binary |
 | `-workers` | int | NumCPU * 2 | Number of concurrent workers (min: 2, max: 16) |
 | `-timeout` | duration | 30s | Timeout for each mutool invocation |
+| `-detect` | bool | false | Dry-run mode: validate prerequisites without processing |
 | `-version` | bool | false | Print version and exit |
 
 ### 4.4 Environment Variables
@@ -193,6 +255,9 @@ go-pdf-extract [OPTIONS]
 | 3 | PathError | Workspace path does not exist or is not a directory |
 | 4 | PatternError | Invalid glob pattern syntax |
 | 5 | OutputError | Cannot create or write output file |
+| 6 | NoFilesFound | No files matching the pattern found |
+| 7 | SearchNotFound | Search pattern not found in any file (detect mode only) |
+| 8 | MutoolExecFail | mutool binary failed execution test |
 | 10 | PartialFailure | Some files failed processing (output still written) |
 
 ## 5. Usage Examples
@@ -317,7 +382,47 @@ go-pdf-extract \
   -output /dev/stdout | jq -r 'select(.value != null) | .filename'
 ```
 
-### 5.9 Error Handling in Scripts
+### 5.9 Prerequisite Detection (Dry Run)
+
+Validate all prerequisites before processing with `-detect`:
+
+```bash
+go-pdf-extract \
+  -path /data/workspace/batch001 \
+  -file-pattern "*.pdf" \
+  -search "DSFN:" \
+  -format json \
+  -output /data/output/routing.json \
+  -detect
+```
+
+**Output (success)**:
+```
+Running prerequisite detection...
+  [OK] Path readable: /data/workspace/batch001 (15 entries)
+  [OK] File pattern matches: 12 file(s)
+  [OK] Mutool found: /usr/bin/mutool
+  [OK] Mutool executes successfully
+  [OK] Search pattern 'DSFN:' found in files
+  [OK] Output writable: /data/output/routing.json
+All prerequisite checks passed.
+```
+
+**Output (failure)**:
+```
+Running prerequisite detection...
+  [OK] Path readable: /data/workspace/batch001 (15 entries)
+  [OK] File pattern matches: 12 file(s)
+Error: [exit 2] mutool not found in PATH, set MUTOOL_BIN or use -mutool-bin flag
+```
+
+The `-detect` flag is useful for:
+- **Deployment validation**: Verify environment setup before scheduling batch jobs
+- **CI/CD pipelines**: Pre-flight check before production runs
+- **Troubleshooting**: Isolate which prerequisite is failing
+- **GoAnywhere MFT**: Add a detect step before processing to catch configuration issues early
+
+### 5.10 Error Handling in Scripts
 
 ```bash
 #!/bin/bash
@@ -335,6 +440,9 @@ case $? in
   3)  echo "Workspace path error" >&2; exit 1 ;;
   4)  echo "Invalid file pattern" >&2; exit 1 ;;
   5)  echo "Cannot write output" >&2; exit 1 ;;
+  6)  echo "No files matching pattern" >&2; exit 1 ;;
+  7)  echo "Search pattern not found in any file" >&2; exit 1 ;;
+  8)  echo "mutool execution failed" >&2; exit 1 ;;
   10) echo "Some files failed; check output for errors" >&2 ;;
 esac
 ```

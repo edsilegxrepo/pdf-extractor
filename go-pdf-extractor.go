@@ -51,6 +51,9 @@ const (
 	ExitPathError      = 3  // Workspace path not found or not a directory
 	ExitPatternError   = 4  // Invalid glob pattern syntax
 	ExitOutputError    = 5  // Cannot create or write to output file
+	ExitNoFilesFound   = 6  // No files matching the pattern found
+	ExitSearchNotFound = 7  // Search pattern not found in any matching file
+	ExitMutoolExecFail = 8  // mutool binary failed execution test
 	ExitPartialFailure = 10 // Some PDFs failed processing (output still written)
 )
 
@@ -73,6 +76,11 @@ type Config struct {
 	MutoolBin   string        // Optional explicit path to mutool binary
 	Timeout     time.Duration // Per-file timeout for mutool execution
 	Workers     int           // Number of concurrent worker goroutines
+	Detect      bool          // Dry-run mode: validate prerequisites without processing
+
+	// Sanitized paths (populated by validateConfig)
+	cleanPath   string // Sanitized workspace path
+	cleanOutput string // Sanitized output path
 }
 
 // main is the application entry point.
@@ -84,7 +92,13 @@ func main() {
 		fmt.Printf("go-pdf-extract version %s\n", version)
 		os.Exit(0)
 	}
-	exitCode, err := run(cfg)
+	var exitCode int
+	var err error
+	if cfg.Detect {
+		exitCode, err = runDetect(cfg)
+	} else {
+		exitCode, err = run(cfg)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
@@ -97,7 +111,7 @@ func main() {
 func run(cfg Config) (int, error) {
 	// Phase 1: Validate configuration
 	// Distinguishes path errors (code 3) from other config errors (code 1)
-	if err := validateConfig(cfg); err != nil {
+	if err := validateConfig(&cfg); err != nil {
 		if strings.Contains(err.Error(), "workspace path") {
 			return ExitPathError, err
 		}
@@ -111,29 +125,199 @@ func run(cfg Config) (int, error) {
 		return ExitMutoolNotFound, err
 	}
 
-	// Phase 3: Discover files matching the glob pattern
-	files, err := findFiles(cfg.Path, cfg.FilePattern)
+	// Phase 2b: Verify mutool executes successfully
+	// Catches broken installations before wasting time on file processing
+	if err := testMutoolExecution(mutoolPath); err != nil {
+		return ExitMutoolExecFail, fmt.Errorf("mutool execution test failed: %v", err)
+	}
+
+	// Phase 3: Discover files matching the glob pattern (use pre-sanitized path)
+	files, err := findFiles(cfg.cleanPath, cfg.FilePattern)
 	if err != nil {
 		return ExitPatternError, err
+	}
+	if len(files) == 0 {
+		return ExitNoFilesFound, fmt.Errorf("no files matching pattern '%s' in %s", cfg.FilePattern, cfg.cleanPath)
 	}
 
 	// Phase 4: Process all files concurrently via worker pool
 	results := processFiles(files, mutoolPath, cfg.Search, cfg.Timeout, cfg.Workers)
 
-	// Phase 5: Write results to output file
-	if err := writeOutput(results, cfg.Format, cfg.Output); err != nil {
+	// Phase 5: Write results to output file (use pre-sanitized path)
+	if err := writeOutput(results, cfg.Format, cfg.cleanOutput); err != nil {
 		return ExitOutputError, fmt.Errorf("writing output: %w", err)
 	}
 
 	// Phase 6: Check for partial failures (some files had errors)
 	// Output is still written; exit code signals that review may be needed
+	var failedFiles []string
 	for _, r := range results {
 		if r.Error != "" {
-			return ExitPartialFailure, nil
+			failedFiles = append(failedFiles, r.Filename)
 		}
+	}
+	if len(failedFiles) > 0 {
+		return ExitPartialFailure, fmt.Errorf("%d file(s) failed: %s", len(failedFiles), strings.Join(failedFiles, ", "))
 	}
 
 	return ExitSuccess, nil
+}
+
+// runDetect executes prerequisite validation without processing files.
+// Checks: path readability, file pattern matches, search pattern presence,
+// output writeability, and mutool binary availability and execution.
+// Returns (exitCode, error) with appropriate exit code for each failure type.
+func runDetect(cfg Config) (int, error) {
+	// Validate required flags first (reuse validateConfig logic)
+	if err := validateConfig(&cfg); err != nil {
+		if strings.Contains(err.Error(), "workspace path") {
+			return ExitPathError, fmt.Errorf("[exit %d] %v", ExitPathError, err)
+		}
+		return ExitConfigError, fmt.Errorf("[exit %d] %v", ExitConfigError, err)
+	}
+
+	fmt.Println("Running prerequisite detection...")
+
+	// Check 1: Validate path is readable (use pre-sanitized path from validateConfig)
+	entries, err := os.ReadDir(cfg.cleanPath)
+	if err != nil {
+		return ExitPathError, fmt.Errorf("[exit %d] path not readable: %v", ExitPathError, err)
+	}
+	fmt.Printf("  [OK] Path readable: %s (%d entries)\n", cfg.cleanPath, len(entries))
+
+	// Check 2: Validate file pattern matches files
+	files, err := findFiles(cfg.cleanPath, cfg.FilePattern)
+	if err != nil {
+		return ExitPatternError, fmt.Errorf("[exit %d] invalid file pattern: %v", ExitPatternError, err)
+	}
+	if len(files) == 0 {
+		return ExitNoFilesFound, fmt.Errorf("[exit %d] no files matching pattern '%s' in %s", ExitNoFilesFound, cfg.FilePattern, cfg.cleanPath)
+	}
+	fmt.Printf("  [OK] File pattern matches: %d file(s)\n", len(files))
+
+	// Check 3: Locate and validate mutool binary
+	mutoolPath, err := findMutool(cfg.MutoolBin)
+	if err != nil {
+		return ExitMutoolNotFound, fmt.Errorf("[exit %d] %v", ExitMutoolNotFound, err)
+	}
+	fmt.Printf("  [OK] Mutool found: %s\n", mutoolPath)
+
+	// Check 4: Test mutool execution with version command
+	if err := testMutoolExecution(mutoolPath); err != nil {
+		return ExitMutoolExecFail, fmt.Errorf("[exit %d] mutool execution test failed: %v", ExitMutoolExecFail, err)
+	}
+	fmt.Println("  [OK] Mutool executes successfully")
+
+	// Check 5: Validate search pattern is found in at least one file
+	found, checkedCount, err := detectSearchPattern(files, mutoolPath, cfg.Search, cfg.Timeout)
+	if err != nil {
+		return ExitPatternError, fmt.Errorf("[exit %d] search pattern detection error: %v", ExitPatternError, err)
+	}
+	if !found {
+		return ExitSearchNotFound, fmt.Errorf("[exit %d] search pattern '%s' not found in any of %d file(s)", ExitSearchNotFound, cfg.Search, checkedCount)
+	}
+	fmt.Printf("  [OK] Search pattern '%s' found in files\n", cfg.Search)
+
+	// Check 6: Validate output path is writable
+	if err := testOutputWritable(cfg.Output); err != nil {
+		return ExitOutputError, fmt.Errorf("[exit %d] output not writable: %v", ExitOutputError, err)
+	}
+	fmt.Printf("  [OK] Output writable: %s\n", cfg.Output)
+
+	fmt.Println("All prerequisite checks passed.")
+	return ExitSuccess, nil
+}
+
+// testMutoolExecution verifies that mutool can be executed successfully.
+// Runs "mutool -v" and checks for successful exit.
+func testMutoolExecution(mutoolPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// #nosec G204 -- mutoolPath is sanitized and validated by findMutool()
+	cmd := exec.CommandContext(ctx, mutoolPath, "-v")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("execution failed: %v (output: %s)", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// detectSearchPattern checks if the search pattern exists in any of the provided files.
+// Processes files sequentially until a match is found (early exit on success).
+// Returns (found, filesChecked, error). If all files fail processing, returns an error.
+func detectSearchPattern(files []string, mutoolPath, search string, timeout time.Duration) (bool, int, error) {
+	failedCount := 0
+	for i, file := range files {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
+		// #nosec G204 -- mutoolPath validated by findMutool(); file from filepath.Glob
+		cmd := exec.CommandContext(ctx, mutoolPath, "draw", "-q", "-F", "txt", "-o", "-", file)
+		setupProcessGroup(cmd)
+
+		output, err := cmd.Output()
+		cancel()
+
+		if err != nil {
+			killProcessGroup(cmd) // Ensure no orphaned child processes
+			failedCount++
+			continue // Skip files that fail to process
+		}
+
+		if strings.Contains(string(output), search) {
+			return true, i + 1, nil
+		}
+	}
+
+	// If all files failed to process, report an error
+	if failedCount == len(files) && len(files) > 0 {
+		return false, len(files), fmt.Errorf("all %d file(s) failed to process", failedCount)
+	}
+
+	return false, len(files), nil
+}
+
+// testOutputWritable verifies that the output path can be written to.
+// Creates a test file, writes data, and removes it.
+func testOutputWritable(outputPath string) error {
+	cleanPath, err := sanitizePath(outputPath)
+	if err != nil {
+		return fmt.Errorf("invalid path: %v", err)
+	}
+
+	// Check parent directory exists
+	parentDir := filepath.Dir(cleanPath)
+	if _, err := os.Stat(parentDir); err != nil {
+		return fmt.Errorf("parent directory not accessible: %v", err)
+	}
+
+	// Create test file with unique suffix to avoid conflicts
+	testPath := cleanPath + ".detect-test"
+	// #nosec G304 -- cleanPath is sanitized by sanitizePath() above
+	file, err := os.Create(testPath)
+	if err != nil {
+		return fmt.Errorf("cannot create file: %v", err)
+	}
+
+	// Write test data
+	_, writeErr := file.WriteString("detect-test")
+	closeErr := file.Close()
+
+	// Clean up test file
+	removeErr := os.Remove(testPath)
+
+	// Report first error encountered
+	if writeErr != nil {
+		return fmt.Errorf("cannot write to file: %v", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("cannot close file: %v", closeErr)
+	}
+	if removeErr != nil {
+		return fmt.Errorf("cannot remove test file: %v", removeErr)
+	}
+
+	return nil
 }
 
 // parseFlags parses command-line arguments and returns configuration.
@@ -154,18 +338,21 @@ func parseFlags() (Config, bool) {
 	timeout := flag.Duration("timeout", defaultTimeout, "Timeout for each mutool invocation")
 	workers := flag.Int("workers", 0, "Number of worker goroutines (default: NumCPU*2, min: 2, max: 16)")
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	detect := flag.Bool("detect", false, "Dry-run mode: validate all prerequisites without processing")
 
 	flag.Parse()
 
 	cfg.Timeout = *timeout
 	cfg.Workers = *workers
+	cfg.Detect = *detect
 	return cfg, *showVersion
 }
 
 // validateConfig checks that all required configuration is present and valid.
 // Performs path sanitization and validates that workspace exists and is a directory.
+// Stores sanitized paths in cfg.cleanPath and cfg.cleanOutput for reuse (DRY).
 // Returns descriptive error messages for user feedback.
-func validateConfig(cfg Config) error {
+func validateConfig(cfg *Config) error {
 	// Check all required flags are provided
 	if cfg.Path == "" {
 		return fmt.Errorf("missing required flag: -path")
@@ -199,26 +386,52 @@ func validateConfig(cfg Config) error {
 	if !info.IsDir() {
 		return fmt.Errorf("workspace path is not a directory: %s", cleanPath)
 	}
+	cfg.cleanPath = cleanPath
 
 	// Sanitize output path (parent directory existence checked at write time)
-	if _, err := sanitizePath(cfg.Output); err != nil {
+	cleanOutput, err := sanitizePath(cfg.Output)
+	if err != nil {
 		return fmt.Errorf("output path error: %v", err)
 	}
+	cfg.cleanOutput = cleanOutput
 
 	return nil
 }
 
 // sanitizePath cleans and validates a filesystem path to prevent path traversal attacks.
-// Performs: empty check -> filepath.Clean -> filepath.Abs -> null byte rejection.
 // SECURITY: All user-supplied paths must pass through this function before use.
+//
+// Validation rules:
+//   - Path must be absolute (no relative paths)
+//   - No path traversal components (..)
+//   - No null bytes or control characters
+//   - No bare roots (/, C:\, D:\)
+//   - No system directories (/etc, /usr, /bin, /sbin, /boot, /sys, /proc)
+//   - Minimum depth of 2 levels required
 func sanitizePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path cannot be empty")
 	}
 
-	// Clean the path to resolve . and .. components
-	// This normalizes the path and removes redundant separators
+	// Reject path traversal attempts before any processing
+	if strings.Contains(path, "..") {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+
+	// Reject null bytes and control characters (ASCII 0-31)
+	for _, r := range path {
+		if r < 32 {
+			return "", fmt.Errorf("path contains invalid characters")
+		}
+	}
+
+	// Clean the path to normalize separators
 	cleaned := filepath.Clean(path)
+
+	// Require absolute paths only
+	if !filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("path must be absolute")
+	}
 
 	// Convert to absolute path for consistent handling
 	absPath, err := filepath.Abs(cleaned)
@@ -226,12 +439,86 @@ func sanitizePath(path string) (string, error) {
 		return "", fmt.Errorf("invalid path: %v", err)
 	}
 
-	// Reject paths with null bytes (potential injection attempt)
-	if strings.ContainsRune(absPath, 0) {
-		return "", fmt.Errorf("path contains invalid characters")
+	// Validate path is not a forbidden location
+	if err := validatePathSecurity(absPath); err != nil {
+		return "", err
 	}
 
 	return absPath, nil
+}
+
+// validatePathSecurity checks that a path is not a root or system directory.
+// SECURITY: Prevents writes to sensitive system locations.
+func validatePathSecurity(absPath string) error {
+	// Normalize for comparison
+	normalized := filepath.Clean(absPath)
+
+	if runtime.GOOS == "windows" {
+		// Windows: handle both drive paths (C:\...) and UNC paths (\\server\share\...)
+		if strings.HasPrefix(normalized, `\\`) {
+			// UNC path: \\server\share\dir\file - need at least 4 segments
+			parts := strings.Split(normalized, `\`)
+			nonEmpty := 0
+			for _, p := range parts {
+				if p != "" {
+					nonEmpty++
+				}
+			}
+			// UNC needs: server, share, dir, file (4 segments minimum)
+			if nonEmpty < 4 {
+				return fmt.Errorf("UNC paths must have at least server, share, directory, and file")
+			}
+			// SECURITY: Block Windows administrative shares (C$, D$, ADMIN$, IPC$, etc.)
+			// These provide access to system roots and bypass normal path restrictions
+			if nonEmpty >= 2 {
+				share := parts[3] // parts[0] and parts[1] are empty from leading \\
+				if strings.HasSuffix(strings.ToUpper(share), "$") {
+					return fmt.Errorf("administrative shares are not allowed")
+				}
+			}
+		} else if len(normalized) >= 3 && normalized[1] == ':' {
+			// Drive path: C:\dir\file - need at least 2 segments after drive
+			parts := strings.Split(normalized[3:], string(filepath.Separator))
+			nonEmpty := 0
+			for _, p := range parts {
+				if p != "" {
+					nonEmpty++
+				}
+			}
+			if nonEmpty < 2 {
+				return fmt.Errorf("files in root directory are not allowed")
+			}
+		} else {
+			return fmt.Errorf("invalid Windows path format")
+		}
+	} else {
+		// Unix: block bare root and files directly in root
+		if normalized == "/" {
+			return fmt.Errorf("root paths are not allowed")
+		}
+
+		// Must have at least 2 path segments (e.g., /dir/file, not /file)
+		parts := strings.Split(normalized, "/")
+		nonEmpty := 0
+		for _, p := range parts {
+			if p != "" {
+				nonEmpty++
+			}
+		}
+		if nonEmpty < 2 {
+			return fmt.Errorf("files in root directory are not allowed")
+		}
+
+		// Block system directories
+		systemDirs := []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc"}
+		for _, sysDir := range systemDirs {
+			if normalized == sysDir || strings.HasPrefix(normalized, sysDir+"/") {
+				return fmt.Errorf("system directory %s is not allowed", sysDir)
+			}
+		}
+	}
+
+	return nil
 }
 
 // validateExecutable checks that a path points to a valid executable file.
@@ -307,8 +594,22 @@ func findMutool(flagPath string) (string, error) {
 // findFiles discovers files matching the glob pattern in the workspace directory.
 // Returns full paths to all matching files.
 // An empty result (no matches) is not an error - returns empty slice.
+// SECURITY: Validates that pattern does not escape the workspace directory.
 func findFiles(basePath, pattern string) ([]string, error) {
+	// Reject patterns that attempt path traversal
+	if strings.Contains(pattern, "..") {
+		return nil, fmt.Errorf("invalid pattern: path traversal not allowed")
+	}
+
 	fullPattern := filepath.Join(basePath, pattern)
+
+	// Verify the resolved pattern is still under basePath
+	cleanBase := filepath.Clean(basePath)
+	cleanPattern := filepath.Clean(fullPattern)
+	if !strings.HasPrefix(cleanPattern, cleanBase+string(filepath.Separator)) && cleanPattern != cleanBase {
+		return nil, fmt.Errorf("invalid pattern: escapes workspace directory")
+	}
+
 	matches, err := filepath.Glob(fullPattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid glob pattern: %v", err)
@@ -352,8 +653,20 @@ func processFiles(files []string, mutoolPath, search string, timeout time.Durati
 		go func() {
 			defer wg.Done()
 			for file := range jobs {
-				result := processFile(file, mutoolPath, search, timeout)
-				results <- result
+				// Recover from panic per-file so one bad file doesn't kill the worker
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							// Send error result for panicked file instead of dropping it
+							results <- Result{
+								Filename: filepath.Base(file),
+								Error:    fmt.Sprintf("panic: %v", r),
+							}
+						}
+					}()
+					result := processFile(file, mutoolPath, search, timeout)
+					results <- result
+				}()
 			}
 		}()
 	}
@@ -410,11 +723,11 @@ func processFile(filePath, mutoolPath, search string, timeout time.Duration) Res
 
 	// Execute mutool and capture stdout
 	output, err := cmd.Output()
+	// CRITICAL: Kill process group on any error or timeout to prevent orphaned child processes.
+	// exec.CommandContext only kills the main process; child processes in the group may survive.
+	// This must be called even after cmd.Output() returns, as children may still be running.
 	if err != nil {
-		// Ensure process group is terminated on error
 		killProcessGroup(cmd)
-
-		// Provide specific error message for timeout vs other errors
 		if ctx.Err() == context.DeadlineExceeded {
 			result.Error = "timeout exceeded"
 		} else {
@@ -453,7 +766,11 @@ func extractValues(text, search string) []string {
 	var values []string
 	seen := make(map[string]bool) // Track seen values for deduplication
 
-	for _, line := range strings.Split(text, "\n") {
+	// Normalize CRLF to LF for consistent splitting across platforms
+	normalizedText := strings.ReplaceAll(text, "\r\n", "\n")
+	normalizedText = strings.ReplaceAll(normalizedText, "\r", "\n")
+
+	for _, line := range strings.Split(normalizedText, "\n") {
 		// Find the search pattern in the line
 		idx := strings.Index(line, search)
 		if idx == -1 {
@@ -476,23 +793,29 @@ func extractValues(text, search string) []string {
 // writeOutput writes extraction results to the output file in the specified format.
 // Supports "json" (NDJSON) and "tsv" (tab-separated with header) formats.
 // Uses buffered I/O for efficient writing of many small records.
+// SECURITY: outputPath must be pre-sanitized by validateConfig().
+// SECURITY: Uses atomic temp file + rename to prevent TOCTOU symlink attacks.
 func writeOutput(results []Result, format, outputPath string) error {
-	// Sanitize output path before creating file
-	cleanPath, err := sanitizePath(outputPath)
+	// SECURITY: Write to temp file then atomic rename to prevent TOCTOU attacks.
+	// This avoids the race between checking symlink status and opening the file.
+	outputDir := filepath.Dir(outputPath)
+	tempFile, err := os.CreateTemp(outputDir, ".go-pdf-extract-*.tmp")
 	if err != nil {
-		return fmt.Errorf("invalid output path: %v", err)
+		return fmt.Errorf("cannot create temp file: %v", err)
 	}
+	tempPath := tempFile.Name()
 
-	// Create output file (truncates if exists)
-	// #nosec G304 -- cleanPath is sanitized by sanitizePath() on the line above
-	file, err := os.Create(cleanPath)
-	if err != nil {
-		return fmt.Errorf("cannot create output file: %v", err)
-	}
-	defer func() { _ = file.Close() }() // Best-effort close; data flushed via writer.Flush()
+	// Clean up temp file on any error
+	success := false
+	defer func() {
+		if !success {
+			_ = tempFile.Close()
+			_ = os.Remove(tempPath)
+		}
+	}()
 
 	// Use buffered writer for efficient I/O
-	writer := bufio.NewWriter(file)
+	writer := bufio.NewWriter(tempFile)
 
 	// Delegate to format-specific writer
 	var writeErr error
@@ -509,8 +832,37 @@ func writeOutput(results []Result, format, outputPath string) error {
 		return writeErr
 	}
 
-	// Flush buffer to file - this is the critical write operation
-	return writer.Flush()
+	// Flush buffer to file
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("flush error: %v", err)
+	}
+
+	// Close temp file before rename (required on Windows)
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close error: %v", err)
+	}
+
+	// SECURITY: Check target is not a symlink before atomic rename
+	if info, err := os.Lstat(outputPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("output path is a symlink: refusing to follow")
+		}
+		// Windows: os.Rename doesn't atomically replace existing files, must remove first
+		if runtime.GOOS == "windows" {
+			if err := os.Remove(outputPath); err != nil {
+				return fmt.Errorf("cannot remove existing output file: %v", err)
+			}
+		}
+	}
+	// Note: if Lstat fails (file doesn't exist), that's fine - rename will create it
+
+	// Atomic rename - this is the commit point
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return fmt.Errorf("cannot write output file: %v", err)
+	}
+
+	success = true
+	return nil
 }
 
 // writeJSON writes results as NDJSON (newline-delimited JSON).
@@ -537,8 +889,10 @@ func writeJSON(writer *bufio.Writer, results []Result) error {
 
 // writeTSV writes results as tab-separated values with a header row.
 // Format: filename<TAB>value<NEWLINE>
-// Multiple values are comma-separated in the value column.
+// Multiple values are pipe-separated (|) in the value column to avoid
+// ambiguity with commas that may appear in extracted values.
 // Errors are not included in TSV format (value column is empty).
+// Tabs and newlines in values are replaced with spaces for TSV compatibility.
 func writeTSV(writer *bufio.Writer, results []Result) error {
 	// Write header row
 	if _, err := writer.WriteString("filename\tvalue\n"); err != nil {
@@ -553,14 +907,33 @@ func writeTSV(writer *bufio.Writer, results []Result) error {
 		case string:
 			value = v
 		case []string:
-			value = strings.Join(v, ",") // Multiple values comma-separated
+			// Escape pipe chars in values, then join with pipe delimiter
+			escaped := make([]string, len(v))
+			for i, s := range v {
+				escaped[i] = strings.ReplaceAll(s, "|", "\\|")
+			}
+			value = strings.Join(escaped, "|")
 		}
 		// nil values result in empty string (no special handling needed)
 
-		line := fmt.Sprintf("%s\t%s\n", result.Filename, value)
+		// Sanitize tabs and newlines to prevent TSV corruption
+		filename := sanitizeTSV(result.Filename)
+		value = sanitizeTSV(value)
+
+		line := fmt.Sprintf("%s\t%s\n", filename, value)
 		if _, err := writer.WriteString(line); err != nil {
 			return fmt.Errorf("write error: %v", err)
 		}
 	}
 	return nil
+}
+
+// sanitizeTSV removes tab and newline characters from a string for TSV output.
+// Standard TSV has no escape mechanism, so we replace problematic characters
+// with spaces to maintain data integrity while ensuring TSV compatibility.
+func sanitizeTSV(s string) string {
+	s = strings.ReplaceAll(s, "\t", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
 }
