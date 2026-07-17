@@ -2456,3 +2456,71 @@ func TestIntegration_MultipleMatches(t *testing.T) {
 	}
 }
 
+// TestKillProcessGroup_NilProcess verifies that killProcessGroup handles nil Process field without error.
+func TestKillProcessGroup_NilProcess(t *testing.T) {
+	cmd := &exec.Cmd{}
+	err := killProcessGroup(cmd)
+	if err != nil {
+		t.Errorf("expected nil error for nil Process, got: %v", err)
+	}
+}
+
+// TestKillProcessGroup_AlreadyFinished verifies that killProcessGroup returns nil error if the process already exited.
+func TestKillProcessGroup_AlreadyFinished(t *testing.T) {
+	var name string
+	var args []string
+	if runtime.GOOS == "windows" {
+		name = "cmd"
+		args = []string{"/c", "echo", "hello"}
+	} else {
+		name = "echo"
+		args = []string{"hello"}
+	}
+
+	cmd := exec.Command(name, args...)
+	setupProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start command: %v", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("failed to wait command: %v", err)
+	}
+
+	// Now that it's finished, call killProcessGroup
+	err := killProcessGroup(cmd)
+	if err != nil {
+		t.Errorf("expected nil error for already finished process, got: %v", err)
+	}
+}
+
+// TestKillProcessGroup_Running verifies that killProcessGroup can kill a running process without returning an error.
+func TestKillProcessGroup_Running(t *testing.T) {
+	var name string
+	var args []string
+	if runtime.GOOS == "windows" {
+		name = "ping"
+		args = []string{"127.0.0.1", "-n", "10"}
+	} else {
+		name = "sleep"
+		args = []string{"10"}
+	}
+
+	cmd := exec.Command(name, args...)
+	setupProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start command: %v", err)
+	}
+
+	// Kill the running process
+	err := killProcessGroup(cmd)
+	if err != nil {
+		t.Errorf("expected nil error for killing running process, got: %v", err)
+	}
+
+	// Wait should return an error because it was killed
+	waitErr := cmd.Wait()
+	if waitErr == nil {
+		t.Error("expected process to be terminated with error, but exit code was 0")
+	}
+}
+

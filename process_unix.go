@@ -49,14 +49,17 @@ func setupProcessGroup(cmd *exec.Cmd) {
 //   - -Pid signals all processes in that group
 //   - SIGKILL ensures immediate termination without possibility of being caught
 //
-// Error from Kill() is intentionally ignored (via unchecked return):
-//   - Process may have already exited normally
-//   - Process group may no longer exist
-//   - Best-effort cleanup; failure is not fatal to the application
-func killProcessGroup(cmd *exec.Cmd) {
-	if cmd.Process != nil {
+// If the process group has already exited (indicated by ESRCH), the error is
+// ignored as it is a normal condition. Other errors are returned to the caller.
+func killProcessGroup(cmd *exec.Cmd) error {
+	if cmd.Process != nil && cmd.Process.Pid > 0 {
 		// Signal the entire process group with SIGKILL
 		// Negative PID = send to process group with PGID = |PID|
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			if err != syscall.ESRCH {
+				return err
+			}
+		}
 	}
+	return nil
 }

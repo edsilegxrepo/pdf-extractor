@@ -21,6 +21,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -43,11 +44,25 @@ func setupProcessGroup(cmd *exec.Cmd) {
 // the process. Combined with process group isolation from setupProcessGroup,
 // this provides reasonable cleanup of the subprocess tree.
 //
-// Error from Kill() is intentionally ignored:
-//   - Process may have already exited normally
-//   - Best-effort cleanup; failure is not fatal to the application
-func killProcessGroup(cmd *exec.Cmd) {
+// If the process has already exited, the error is ignored as it is expected.
+// Other errors are returned to the caller.
+func killProcessGroup(cmd *exec.Cmd) error {
 	if cmd.Process != nil {
-		_ = cmd.Process.Kill() // Best-effort termination; error expected if already dead
+		if err := cmd.Process.Kill(); err != nil {
+			if err == os.ErrProcessDone {
+				return nil
+			}
+			// On Windows, if the process has already exited, TerminateProcess returns Access Denied
+			// or Invalid Handle errors. Since we spawned the process, these indicate it has already terminated.
+			if sysErr, ok := err.(*os.SyscallError); ok {
+				if errno, ok := sysErr.Err.(syscall.Errno); ok {
+					if errno == syscall.ERROR_ACCESS_DENIED || errno == syscall.ERROR_INVALID_HANDLE {
+						return nil
+					}
+				}
+			}
+			return err
+		}
 	}
+	return nil
 }

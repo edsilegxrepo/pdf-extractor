@@ -734,11 +734,14 @@ func processFile(filePath, mutoolPath, search string, timeout time.Duration) Res
 	// exec.CommandContext only kills the main process; child processes in the group may survive.
 	// This must be called even after cmd.Output() returns, as children may still be running.
 	if err != nil {
-		killProcessGroup(cmd)
+		killErr := killProcessGroup(cmd)
 		if ctx.Err() == context.DeadlineExceeded {
 			result.Error = "timeout exceeded"
 		} else {
 			result.Error = fmt.Sprintf("mutool error: %v", err)
+		}
+		if killErr != nil {
+			result.Error = fmt.Sprintf("%s; cleanup error: %v", result.Error, killErr)
 		}
 		return result
 	}

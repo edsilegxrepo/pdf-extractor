@@ -241,6 +241,9 @@ Total: **118+ tests** covering all functionality.
 | `TestWriteJSON_Success` | Successful JSON writing |
 | `TestWriteJSON_Error` | JSON write error handling when the writer fails |
 | `TestMain_Version` | Subprocess-based test verifying version output, main, and parseFlags |
+| `TestKillProcessGroup_NilProcess` | Handles nil Process field without error |
+| `TestKillProcessGroup_AlreadyFinished` | Returns nil error if the process already exited (ignores expected dead-process errors) |
+| `TestKillProcessGroup_Running` | Terminates a running process group without returning an error |
 
 ### Running Tests
 
