@@ -1,4 +1,4 @@
-# go-pdf-extract Architecture Document
+# go-pdf-extractor Architecture Document
 
 ## 1. Architecture and Design Choices
 
@@ -419,7 +419,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph Application["go-pdf-extract"]
+    subgraph Application["go-pdf-extractor"]
         MAIN[go-pdf-extractor.go]
         PROC_WIN[process_windows.go]
         PROC_UNIX[process_unix.go]

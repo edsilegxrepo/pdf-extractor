@@ -1,4 +1,4 @@
-# go-pdf-extract
+# go-pdf-extractor
 
 A command-line utility for extracting delimiter-based values from PDF files using MuPDF's mutool.
 
@@ -6,7 +6,7 @@ A command-line utility for extracting delimiter-based values from PDF files usin
 
 ### 1.1 Purpose
 
-go-pdf-extract processes batches of PDF files to extract text values that follow a specified delimiter pattern. The tool is designed for integration with workflow orchestration platforms such as GoAnywhere MFT to enable content-based document routing.
+go-pdf-extractor processes batches of PDF files to extract text values that follow a specified delimiter pattern. The tool is designed for integration with workflow orchestration platforms such as GoAnywhere MFT to enable content-based document routing.
 
 ### 1.2 Objectives
 
@@ -216,7 +216,7 @@ See [TESTING.md](TESTING.md) for detailed test documentation.
 ### 4.1 Synopsis
 
 ```
-go-pdf-extract [OPTIONS]
+go-pdf-extractor [OPTIONS]
 ```
 
 ### 4.2 Required Arguments
@@ -260,6 +260,35 @@ go-pdf-extract [OPTIONS]
 | 8 | MutoolExecFail | mutool binary failed execution test |
 | 10 | PartialFailure | Some files failed processing (output still written) |
 
+### 4.6 Output Formats
+
+#### 4.6.1 Newline-Delimited JSON (NDJSON)
+When `-format json` is specified, the output file contains one JSON object per line (streaming-friendly format):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `filename` | string | Base name of the processed PDF file |
+| `value` | string, array, or null | Extracted value(s); null if no match found. Array if multiple matches are found in the same file. |
+| `error` | string (optional) | Error message if processing failed for this specific file |
+
+Example line:
+```json
+{"filename":"doc1.pdf","value":"327078_X_X_X_X_Wage.pdf"}
+```
+
+#### 4.6.2 Tab-Separated Values (TSV)
+When `-format tsv` is specified, the output file contains a header row followed by tab-separated values:
+
+*   **Format:** `filename<TAB>value<NEWLINE>`
+*   **Multi-Value Separation:** Multiple values extracted from a single file are **pipe-separated (`|`)** to avoid ambiguity with commas that may appear in document text.
+*   **Errors:** Errors are not included in the TSV output; the value column is left empty in case of errors or if no match is found.
+
+Example line:
+```
+doc1.pdf	value1|value2
+```
+
+
 ## 5. Usage Examples
 
 ### 5.1 Basic Extraction
@@ -267,7 +296,7 @@ go-pdf-extract [OPTIONS]
 Extract DSFN values from all PDFs in a workspace:
 
 ```bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace/batch001 \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -287,7 +316,7 @@ go-pdf-extract \
 Generate human-readable TSV output:
 
 ```bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -308,7 +337,7 @@ document3.pdf
 Limit concurrency on resource-constrained systems:
 
 ```bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -322,7 +351,7 @@ go-pdf-extract \
 Process large or complex PDFs:
 
 ```bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/large_documents \
   -file-pattern "report_*.pdf" \
   -search "Reference:" \
@@ -336,7 +365,7 @@ go-pdf-extract \
 Use a specific mutool installation:
 
 ```bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -348,7 +377,7 @@ go-pdf-extract \
 ### 5.6 Windows PowerShell
 
 ```powershell
-.\go-pdf-extract.exe `
+.\go-pdf-extractor.exe `
   -path "D:\Data\Workspace\batch001" `
   -file-pattern "*.pdf" `
   -search "DSFN:" `
@@ -361,7 +390,7 @@ go-pdf-extract \
 ```bash
 export MUTOOL_BIN=/var/opt/bin/mutool
 
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -374,7 +403,7 @@ go-pdf-extract \
 Parse JSON output for specific values:
 
 ```bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -387,7 +416,7 @@ go-pdf-extract \
 Validate all prerequisites before processing with `-detect`:
 
 ```bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace/batch001 \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -426,7 +455,7 @@ The `-detect` flag is useful for:
 
 ```bash
 #!/bin/bash
-go-pdf-extract \
+go-pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -458,14 +487,14 @@ esac
 
 ```bash
 # Clone repository
-git clone https://github.com/<owner>/go-pdf-extract
-cd go-pdf-extract
+git clone https://github.com/<owner>/go-pdf-extractor
+cd go-pdf-extractor
 
 # Build for current platform (development)
-go build -o ../bin/go-pdf-extract ./...
+go build -o ../bin/go-pdf-extractor ./...
 
 # Build with version information (release)
-go build -ldflags "-s -w -X main.version=1.0.0" -trimpath -buildmode=pie -o ../bin/go-pdf-extract ./...
+go build -ldflags "-s -w -X main.version=1.0.0" -trimpath -buildmode=pie -o ../bin/go-pdf-extractor ./...
 
 # Cross-compile for Linux
 GOOS=linux
@@ -499,11 +528,11 @@ sudo apt-get install mupdf-tools
 # Verify mutool installation
 mutool -v
 
-# Verify go-pdf-extract version
-./go-pdf-extract -version
+# Verify go-pdf-extractor version
+./go-pdf-extractor -version
 
-# Verify go-pdf-extract help
-./go-pdf-extract -h
+# Verify go-pdf-extractor help
+./go-pdf-extractor -h
 
 # Test with sample file
 echo "Test DSFN:12345" | mutool draw -q -F txt -o - /dev/stdin
@@ -511,10 +540,10 @@ echo "Test DSFN:12345" | mutool draw -q -F txt -o - /dev/stdin
 
 ### 6.5 GoAnywhere MFT Integration
 
-1. Deploy `go-pdf-extract` binary to accessible location on GoAnywhere server
+1. Deploy `go-pdf-extractor` binary to accessible location on GoAnywhere server
 2. Configure mutool path via `MUTOOL_BIN` environment variable or workflow parameter
 3. Create workflow with Execute Command task:
-   - Command: `/path/to/go-pdf-extract`
+   - Command: `/path/to/go-pdf-extractor`
    - Arguments: `-path "${workspace}" -file-pattern "*.pdf" -search "DSFN:" -format json -output "${workspace}/routing.json"`
    Note: use folder variables instead of hardcoded values
 4. Add conditional routing based on exit code

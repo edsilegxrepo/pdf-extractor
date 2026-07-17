@@ -1,4 +1,4 @@
-// Package main provides tests for go-pdf-extract.
+// Package main provides tests for go-pdf-extractor.
 //
 // Test Strategy Overview:
 //
@@ -44,8 +44,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -302,6 +304,15 @@ func testfilesPath(t *testing.T) string {
 // TestFindMutool verifies mutool binary discovery with precedence rules.
 // Test cases: flag path, env path, PATH lookup, precedence ordering, not found.
 func TestFindMutool(t *testing.T) {
+	origMutoolBin := os.Getenv("MUTOOL_BIN")
+	t.Cleanup(func() {
+		if origMutoolBin != "" {
+			_ = os.Setenv("MUTOOL_BIN", origMutoolBin)
+		} else {
+			_ = os.Unsetenv("MUTOOL_BIN")
+		}
+	})
+
 	t.Run("flag path exists", func(t *testing.T) {
 		tmpFile := filepath.Join(t.TempDir(), testExecutableName("mutool"))
 		_ = os.WriteFile(tmpFile, []byte("fake"), 0o755)
@@ -376,7 +387,13 @@ func TestFindMutool(t *testing.T) {
 	})
 
 	t.Run("not found anywhere", func(t *testing.T) {
+		oldMutoolBin := os.Getenv("MUTOOL_BIN")
 		_ = os.Unsetenv("MUTOOL_BIN")
+		defer func() {
+			if oldMutoolBin != "" {
+				_ = os.Setenv("MUTOOL_BIN", oldMutoolBin)
+			}
+		}()
 		oldPath := os.Getenv("PATH")
 		_ = os.Setenv("PATH", "/nonexistent")
 		defer func() { _ = os.Setenv("PATH", oldPath) }()
@@ -650,10 +667,7 @@ func TestProcessFilesWorkerPool(t *testing.T) {
 		t.Skip("skipping concurrency test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	files, err := findFiles("testfiles", "*.pdf")
 	if err != nil || len(files) == 0 {
@@ -688,10 +702,7 @@ func TestProcessFilesWorkersBounds(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	files, err := findFiles("testfiles", "*.pdf")
 	if err != nil || len(files) == 0 {
@@ -727,10 +738,7 @@ func TestIntegration_WorkersFlag(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	tests := []struct {
 		name    string
@@ -853,10 +861,7 @@ func TestRun_Success(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	tmpDir := t.TempDir()
 	outputFile := filepath.Join(tmpDir, "run_output.json")
@@ -871,7 +876,7 @@ func TestRun_Success(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -986,7 +991,7 @@ func TestRun_ExitCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.expectedCode == ExitPatternError || tt.expectedCode == ExitOutputError {
+			if tt.expectedCode == ExitPatternError || tt.expectedCode == ExitOutputError || tt.expectedCode == ExitNoFilesFound {
 				if mutoolPath == "" {
 					t.Skip("mutool not available")
 				}
@@ -1005,10 +1010,7 @@ func TestRun_ExitSuccess(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "exit_success.json")
@@ -1056,10 +1058,7 @@ func TestRun_MutoolNotFound(t *testing.T) {
 func TestRun_InvalidGlobPattern(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		return // skip if no mutool
-	}
+	mutoolPath := requireMutool(t)
 
 	cfg := Config{
 		Path:        tmpDir,
@@ -1071,7 +1070,7 @@ func TestRun_InvalidGlobPattern(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err == nil {
 		t.Error("expected error for invalid glob pattern")
 	}
@@ -1083,10 +1082,7 @@ func TestRun_OutputWriteError(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	cfg := Config{
 		Path:        testfilesPath(t),
@@ -1098,7 +1094,7 @@ func TestRun_OutputWriteError(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err == nil {
 		t.Error("expected error for invalid output path")
 	}
@@ -1116,10 +1112,7 @@ func TestIntegration_FormatJSON(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "format_json.json")
@@ -1134,7 +1127,7 @@ func TestIntegration_FormatJSON(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1155,10 +1148,7 @@ func TestIntegration_FormatTSV(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "format_tsv.tsv")
@@ -1173,7 +1163,7 @@ func TestIntegration_FormatTSV(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1194,10 +1184,7 @@ func TestIntegration_DifferentSearchPattern(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "different_pattern.json")
@@ -1212,7 +1199,7 @@ func TestIntegration_DifferentSearchPattern(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1232,10 +1219,7 @@ func TestIntegration_FilePatternSpecific(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "specific_file.json")
@@ -1250,7 +1234,7 @@ func TestIntegration_FilePatternSpecific(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1271,10 +1255,7 @@ func TestIntegration_MutoolBinFlag(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "mutool_flag.json")
@@ -1289,7 +1270,7 @@ func TestIntegration_MutoolBinFlag(t *testing.T) {
 		Timeout:     30 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err != nil {
 		t.Fatalf("run() with explicit mutool-bin failed: %v", err)
 	}
@@ -1306,10 +1287,7 @@ func TestIntegration_TimeoutFlag(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "timeout.json")
@@ -1324,7 +1302,7 @@ func TestIntegration_TimeoutFlag(t *testing.T) {
 		Timeout:     60 * time.Second,
 	}
 
-	_, err = run(cfg)
+	_, err := run(cfg)
 	if err != nil {
 		t.Fatalf("run() with 60s timeout failed: %v", err)
 	}
@@ -1341,10 +1319,7 @@ func TestIntegration_NoMatchingFiles(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "no_match.json")
@@ -1374,10 +1349,7 @@ func TestIntegration_AllFlagsCombined(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 
@@ -1427,10 +1399,7 @@ func TestProcessFileWithMutoolError(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	result := processFile("nonexistent_file.pdf", mutoolPath, "DSFN:", 30*time.Second)
 	if result.Error == "" {
@@ -1521,10 +1490,7 @@ func TestIntegration_SingleFileWithMatch(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	result := processFile("testfiles/sample001.pdf", mutoolPath, "DSFN:", 30*time.Second)
 
@@ -1547,10 +1513,7 @@ func TestIntegration_SingleFileWithSpaceAfterDelimiter(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	result := processFile("testfiles/sample002.pdf", mutoolPath, "DSFN:", 30*time.Second)
 
@@ -1573,10 +1536,7 @@ func TestIntegration_BatchProcessing(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	files, err := findFiles("testfiles", "*.pdf")
 	if err != nil {
@@ -1609,10 +1569,7 @@ func TestIntegration_JSONOutput(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	files, err := findFiles("testfiles", "*.pdf")
 	if err != nil {
@@ -1655,10 +1612,7 @@ func TestIntegration_TSVOutput(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	files, err := findFiles("testfiles", "*.pdf")
 	if err != nil {
@@ -1703,10 +1657,7 @@ func TestIntegration_NoMatchFile(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	result := processFile("testfiles/sample001.pdf", mutoolPath, "NONEXISTENT:", 30*time.Second)
 
@@ -1724,10 +1675,7 @@ func TestIntegration_EndToEnd(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, err := findMutool("")
-	if err != nil {
-		t.Skipf("mutool not available: %v", err)
-	}
+	mutoolPath := requireMutool(t)
 
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "results.json")
@@ -1795,10 +1743,7 @@ func TestRunDetect_Success(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, _ := findMutool("")
-	if mutoolPath == "" {
-		t.Skip("mutool not available")
-	}
+	mutoolPath := requireMutool(t)
 
 	tmpDir := t.TempDir()
 	outputFile := filepath.Join(tmpDir, "output.json")
@@ -1901,10 +1846,7 @@ func TestRunDetect_OutputNotWritable(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, _ := findMutool("")
-	if mutoolPath == "" {
-		t.Skip("mutool not available")
-	}
+	mutoolPath := requireMutool(t)
 
 	tmpDir := t.TempDir()
 
@@ -1937,10 +1879,7 @@ func TestRunDetect_SearchNotFound(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, _ := findMutool("")
-	if mutoolPath == "" {
-		t.Skip("mutool not available")
-	}
+	mutoolPath := requireMutool(t)
 
 	tmpDir := t.TempDir()
 
@@ -1973,10 +1912,7 @@ func TestTestMutoolExecution(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, _ := findMutool("")
-	if mutoolPath == "" {
-		t.Skip("mutool not available")
-	}
+	mutoolPath := requireMutool(t)
 
 	err := testMutoolExecution(mutoolPath)
 	if err != nil {
@@ -1998,10 +1934,7 @@ func TestDetectSearchPattern(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, _ := findMutool("")
-	if mutoolPath == "" {
-		t.Skip("mutool not available")
-	}
+	mutoolPath := requireMutool(t)
 
 	tmpDir := t.TempDir()
 
@@ -2031,10 +1964,7 @@ func TestDetectSearchPattern_NotFound(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	mutoolPath, _ := findMutool("")
-	if mutoolPath == "" {
-		t.Skip("mutool not available")
-	}
+	mutoolPath := requireMutool(t)
 
 	tmpDir := t.TempDir()
 
@@ -2230,6 +2160,52 @@ func TestSanitizePath_Security(t *testing.T) {
 	}
 }
 
+// TestValidatePathSecurityOS checks path security rules for both Windows and Unix OS targets.
+func TestValidatePathSecurityOS(t *testing.T) {
+	t.Run("unix rules", func(t *testing.T) {
+		tests := []struct {
+			path    string
+			wantErr bool
+		}{
+			{"/", true},
+			{"/file.txt", true},
+			{"/etc", true},
+			{"/etc/hosts", true},
+			{"/usr/bin/go", true},
+			{"/data/workspace/file.txt", false},
+		}
+		for _, tt := range tests {
+			err := validatePathSecurityOS(tt.path, "linux")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validatePathSecurityOS(%q, \"linux\") error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			}
+		}
+	})
+
+	t.Run("windows rules", func(t *testing.T) {
+		tests := []struct {
+			path    string
+			wantErr bool
+		}{
+			{`C:\`, true},
+			{`C:\file.txt`, true},
+			{`\\server\share`, true},
+			{`\\server\share\`, true},
+			{`\\server\C$`, true},
+			{`\\server\C$\file.txt`, true},
+			{`\\server\share\dir\file.txt`, false},
+			{`C:\data\file.txt`, false},
+			{`invalid_format`, true},
+		}
+		for _, tt := range tests {
+			err := validatePathSecurityOS(tt.path, "windows")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validatePathSecurityOS(%q, \"windows\") error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			}
+		}
+	})
+}
+
 // TestSanitizePath_ValidPaths tests that valid paths are accepted.
 func TestSanitizePath_ValidPaths(t *testing.T) {
 	var validPaths []string
@@ -2298,9 +2274,8 @@ func TestValidateExecutable_NotExecutable(t *testing.T) {
 	}
 }
 
-// TestWriteJSON_Error tests JSON write error handling.
-func TestWriteJSON_Error(t *testing.T) {
-	// Create a writer that always fails
+// TestWriteJSON_Success tests successful JSON writing.
+func TestWriteJSON_Success(t *testing.T) {
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
 
@@ -2308,6 +2283,24 @@ func TestWriteJSON_Error(t *testing.T) {
 	err := writeJSON(w, results)
 	if err != nil {
 		t.Errorf("writeJSON should not fail with valid buffer: %v", err)
+	}
+}
+
+type errorWriter struct{}
+
+func (errorWriter) Write(p []byte) (int, error) {
+	return 0, fmt.Errorf("simulated write error")
+}
+
+// TestWriteJSON_Error tests JSON write error handling when the writer fails.
+func TestWriteJSON_Error(t *testing.T) {
+	ew := errorWriter{}
+	w := bufio.NewWriterSize(ew, 1) // 1-byte buffer to trigger flush immediately
+
+	results := []Result{{Filename: "test.pdf", Value: "value"}}
+	err := writeJSON(w, results)
+	if err == nil {
+		t.Error("expected error for failing writer, got nil")
 	}
 }
 
@@ -2383,3 +2376,34 @@ startxref
 		t.Fatalf("failed to create PDF file: %v", err)
 	}
 }
+
+// requireMutool locates the mutool binary or skips the test if not found.
+func requireMutool(t *testing.T) string {
+	t.Helper()
+	mutoolPath, err := findMutool("")
+	if err != nil {
+		t.Skipf("mutool not available: %v", err)
+	}
+	return mutoolPath
+}
+
+// TestMain_Version tests the -version flag execution.
+func TestMain_Version(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		// Reset the default flag set to avoid panics on redefinition
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"go-pdf-extractor", "-version"}
+		main()
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestMain_Version")
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("process exited with error: %v, output: %s", err, string(output))
+	}
+	if !strings.Contains(string(output), "version") {
+		t.Errorf("expected version output, got: %s", string(output))
+	}
+}
+

@@ -1,4 +1,4 @@
-# go-pdf-extract Test Plan
+# go-pdf-extractor Test Plan
 
 ## 1. Unit Tests
 
@@ -232,10 +232,14 @@ Total: **118+ tests** covering all functionality.
 | `TestSanitizePath_NullByte` | Paths with null bytes are rejected |
 | `TestSanitizePath_Empty` | Empty paths are rejected |
 | `TestSanitizePath_Security` | Path traversal, relative paths, control chars, roots, system dirs, UNC admin shares blocked |
+| `TestValidatePathSecurityOS` | Path security rules for both Windows and Unix OS targets |
 | `TestSanitizePath_ValidPaths` | Valid absolute paths with proper depth are accepted |
 | `TestValidateExecutable_Directory` | Directories are rejected as executables |
+| `TestValidateExecutable_NotExists` | Non-existent paths are rejected as executables |
 | `TestValidateExecutable_NotExecutable` | Non-executable files rejected (Unix only) |
-| `TestWriteJSON_Error` | JSON write error handling |
+| `TestWriteJSON_Success` | Successful JSON writing |
+| `TestWriteJSON_Error` | JSON write error handling when the writer fails |
+| `TestMain_Version` | Subprocess-based test verifying version output, main, and parseFlags |
 
 ### Running Tests
 
@@ -258,7 +262,7 @@ KEEP_TEST_WORKSPACE=1 go test -v ./...
 
 ## 8. Code Coverage
 
-**Total coverage: 78.5%** (target: 80%)
+**Total coverage: 88.2%** (target: 80%)
 
 ### Calculating Coverage
 
@@ -272,7 +276,7 @@ go test -coverprofile=$env:TEMP/coverage.out ./...; go tool cover -func=$env:TEM
 
 | Function | Coverage |
 |----------|----------|
-| `findMutool` | 100.0% |
+| `findMutool` | 87.5% |
 | `findFiles` | 90.9% |
 | `processFiles` | 96.8% |
 | `extractValues` | 100.0% |
@@ -281,22 +285,24 @@ go test -coverprofile=$env:TEMP/coverage.out ./...; go tool cover -func=$env:TEM
 | `testMutoolExecution` | 100.0% |
 | `validateMutoolPath` | 100.0% |
 | `validateConfig` | 100.0% |
+| `validateAndMapConfig` | 100.0% |
 | `sanitizePath` | 93.8% |
 | `sanitizeTSV` | 100.0% |
 | `processFile` | 95.0% |
-| `run` | 87.5% |
-| `runDetect` | 84.8% |
-| `detectSearchPattern` | 75.0% |
+| `run` | 86.4% |
+| `runDetect` | 87.1% |
+| `detectSearchPattern` | 72.7% |
 | `writeTSV` | 87.5% |
 | `testOutputWritable` | 80.0% |
 | `validateExecutable` | 75.0% |
 | `writeOutput` | 71.9% |
-| `writeJSON` | 66.7% |
-| `validatePathSecurity` | 59.5% |
-| `main` | 0.0% (entry point, not unit testable) |
-| `parseFlags` | 0.0% (entry point, not unit testable) |
+| `writeJSON` | 77.8% |
+| `validatePathSecurity` | 100.0% |
+| `validatePathSecurityOS` | 97.6% |
+| `main` | 33.3% |
+| `parseFlags` | 100.0% |
 
-Note: `main()` and `parseFlags()` are entry points that cannot be unit tested directly. All business logic is extracted into testable functions. `validatePathSecurity` has lower coverage because Unix-specific system directory checks (lines 486-509) are not exercised on Windows, and vice versa for Windows UNC/drive path checks on Unix.
+Note: `main()` and `parseFlags()` are tested via helper subprocess execution tests in the test suite to achieve validation. `validatePathSecurity` has 100.0% coverage by separating target OS validation into a mockable `validatePathSecurityOS` helper function.
 
 ## 9. Test Workspace Requirements
 

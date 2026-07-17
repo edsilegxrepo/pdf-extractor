@@ -1,10 +1,10 @@
-# go-pdf-extract Design Document
+# go-pdf-extractor Design Document
 
 ## 1. Overview
 
 ### 1.1 Purpose
 
-go-pdf-extract is a command-line utility that extracts delimiter-based values from PDF files using the MuPDF `mutool` binary. The tool processes batches of PDF files concurrently and outputs structured data in JSON or TSV format.
+go-pdf-extractor is a command-line utility that extracts delimiter-based values from PDF files using the MuPDF `mutool` binary. The tool processes batches of PDF files concurrently and outputs structured data in JSON or TSV format.
 
 ### 1.2 Business Requirements
 
@@ -26,7 +26,7 @@ The application addresses the following business needs:
 
 ### 2.1 Primary Use Case: DocuSign Document Routing
 
-**Actors**: GoAnywhere MFT, go-pdf-extract, Nuxeo ECM
+**Actors**: GoAnywhere MFT, go-pdf-extractor, Nuxeo ECM
 
 **Preconditions**:
 - Signed PDF files have been deposited in a GoAnywhere workspace directory
@@ -36,8 +36,8 @@ The application addresses the following business needs:
 **Flow**:
 1. GoAnywhere receives one or more signed PDF files from DocuSign
 2. GoAnywhere creates a uniquely-named workspace directory
-3. GoAnywhere invokes go-pdf-extract with the workspace path and output parameters
-4. go-pdf-extract extracts routing values from all PDFs and writes results to the output file
+3. GoAnywhere invokes go-pdf-extractor with the workspace path and output parameters
+4. go-pdf-extractor extracts routing values from all PDFs and writes results to the output file
 5. GoAnywhere parses the output file to determine routing rules for each document
 6. Documents are routed to appropriate Nuxeo ECM destinations based on extracted values
 7. Workspace directory is destroyed after processing completes
@@ -51,7 +51,7 @@ The application addresses the following business needs:
 **Purpose**: Validate that a set of PDFs contain expected routing identifiers before processing.
 
 **Flow**:
-1. Operator invokes go-pdf-extract with `-format tsv` for human-readable output
+1. Operator invokes go-pdf-extractor with `-format tsv` for human-readable output
 2. Output is reviewed to identify documents with missing or unexpected values
 3. Documents with `null` values are flagged for manual review
 
@@ -61,7 +61,7 @@ The application addresses the following business needs:
 
 **Flow**:
 1. Operator specifies custom `-search` pattern (e.g., `Invoice:`, `PO:`, `REF:`)
-2. go-pdf-extract extracts values following the specified delimiter
+2. go-pdf-extractor extracts values following the specified delimiter
 3. Results are processed according to the custom pattern requirements
 
 ## 3. Integration Context
@@ -79,7 +79,7 @@ flowchart LR
     end
 
     subgraph Processing["PDF Processing"]
-        EXTRACT[go-pdf-extract]
+        EXTRACT[go-pdf-extractor]
         MUTOOL[mutool]
     end
 
@@ -96,25 +96,14 @@ flowchart LR
 ```
 
 ### 3.2 Input Parameters
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `-path` | string | Yes | - | Absolute or relative path to workspace directory containing PDF files |
-| `-file-pattern` | string | Yes | - | Glob pattern for file selection (e.g., `*.pdf`, `invoice_*.pdf`) |
-| `-search` | string | Yes | - | Delimiter pattern to search for in PDF text content |
-| `-format` | string | Yes | - | Output format: `json` or `tsv` |
-| `-output` | string | Yes | - | Path to output file (will be created or overwritten) |
-| `-mutool-bin` | string | No | Auto-detect | Explicit path to mutool binary |
-| `-workers` | int | No | NumCPU * 2 | Number of concurrent worker goroutines (min: 2, max: 16) |
-| `-timeout` | duration | No | 30s | Timeout for each mutool invocation (e.g., `30s`, `1m`, `90s`) |
-| `-version` | bool | No | false | Print version and exit |
+The command line parameters are parsed to populate the application configuration. See [README.md#4-command-line-interface](README.md#4-command-line-interface) for details on specific CLI flags, optional defaults, and environment variable support.
 
 ### 3.3 Expected Inputs
 
 **PDF Files**:
 - Standard PDF format (PDF 1.0 through PDF 2.0)
 - Text-based content (not scanned images requiring OCR)
-- Accessible (not password-protected, unless mutool can handle)
+- Accessible (not password-protected)
 - Contains search pattern on one or more lines
 
 **Search Pattern Format**:
@@ -131,125 +120,10 @@ REF:PO-98765
 ```
 
 ### 3.4 Output Formats
+The utility supports writing results in either Newline-Delimited JSON (NDJSON) or Tab-Separated Values (TSV). See [README.md#46-output-formats](README.md#46-output-formats) for the exact specification of outputs, field types, and multi-value separation (pipe-delimited values).
 
-#### 3.4.1 JSON Output (NDJSON)
-
-Newline-delimited JSON with one object per line:
-
-```json
-{"filename":"doc1.pdf","value":"327078_X_X_X_X_Wage.pdf"}
-{"filename":"doc2.pdf","value":["value1","value2"]}
-{"filename":"doc3.pdf","value":null}
-{"filename":"doc4.pdf","value":null,"error":"timeout exceeded"}
-```
-
-**Field Definitions**:
-| Field | Type | Description |
-|-------|------|-------------|
-| `filename` | string | Base name of the processed PDF file |
-| `value` | string, array, or null | Extracted value(s); null if no match found |
-| `error` | string (optional) | Error message if processing failed |
-
-#### 3.4.2 TSV Output
-
-Tab-separated values with header row:
-
-```
-filename	value
-doc1.pdf	327078_X_X_X_X_Wage.pdf
-doc2.pdf	value1,value2
-doc3.pdf	
-doc4.pdf	
-```
-
-**Notes**:
-- Multiple values are comma-separated in the value column
-- Empty value column indicates no match or error
-- Error details are not included in TSV format
-
-## 4. Examples
-
-### 4.1 Basic Usage
-
-```bash
-# Extract DSFN values from all PDFs in workspace
-go-pdf-extract \
-  -path /data/workspace/batch_20240115 \
-  -file-pattern "*.pdf" \
-  -search "DSFN:" \
-  -format json \
-  -output /data/output/routing.json
-```
-
-### 4.2 Custom Worker Count
-
-```bash
-# Limit concurrency on resource-constrained systems
-go-pdf-extract \
-  -path /data/workspace \
-  -file-pattern "*.pdf" \
-  -search "DSFN:" \
-  -format json \
-  -output /tmp/results.json \
-  -workers 4
-```
-
-### 4.3 Extended Timeout
-
-```bash
-# Process large PDFs with extended timeout
-go-pdf-extract \
-  -path /data/large_docs \
-  -file-pattern "report_*.pdf" \
-  -search "Reference:" \
-  -format tsv \
-  -output /tmp/references.tsv \
-  -timeout 120s
-```
-
-### 4.4 Explicit mutool Path
-
-```bash
-# Use specific mutool installation
-go-pdf-extract \
-  -path /data/workspace \
-  -file-pattern "*.pdf" \
-  -search "DSFN:" \
-  -format json \
-  -output /tmp/results.json \
-  -mutool-bin /opt/mupdf/bin/mutool
-```
-
-### 4.5 Windows Example
-
-```powershell
-# Windows PowerShell invocation
-.\go-pdf-extract.exe `
-  -path "D:\Data\Workspace\batch001" `
-  -file-pattern "*.pdf" `
-  -search "DSFN:" `
-  -format json `
-  -output "D:\Data\Output\routing.json"
-```
-
-### 4.6 Sample Output
-
-**Input**: Two PDF files containing:
-- `sample001.pdf`: Contains line `DSFN:Employee ID_X_X_X_X_Eag-AHP.pdf`
-- `sample002.pdf`: Contains line `DSFN: 327078_X_X_X_X_Wage.pdf`
-
-**JSON Output**:
-```json
-{"filename":"sample001.pdf","value":"Employee ID_X_X_X_X_Eag-AHP.pdf"}
-{"filename":"sample002.pdf","value":"327078_X_X_X_X_Wage.pdf"}
-```
-
-**TSV Output**:
-```
-filename	value
-sample001.pdf	Employee ID_X_X_X_X_Eag-AHP.pdf
-sample002.pdf	327078_X_X_X_X_Wage.pdf
-```
+## 4. CLI Execution Model
+For execution command patterns, CLI flags, Windows PowerShell examples, and Unix shell integration scripts, see the user guide in [README.md#5-usage-examples](README.md#5-usage-examples).
 
 ## 5. Concurrency Model
 
@@ -312,6 +186,9 @@ flowchart TB
 | 3 | ExitPathError | Workspace path does not exist or is not a directory | No |
 | 4 | ExitPatternError | Invalid glob pattern syntax | No |
 | 5 | ExitOutputError | Cannot create or write to output file | No |
+| 6 | ExitNoFilesFound | No files matching pattern in workspace | No |
+| 7 | ExitSearchNotFound | Search pattern not found in any files (detect mode) | No |
+| 8 | ExitMutoolExecFail | mutool binary found but failed execution | No |
 | 10 | ExitPartialFailure | Some PDFs failed processing | Yes |
 
 ### 6.2 Per-File Error Handling

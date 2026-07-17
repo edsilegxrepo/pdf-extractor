@@ -1,4 +1,4 @@
-// Package main implements go-pdf-extract, a CLI tool for extracting delimiter-based
+// Package main implements go-pdf-extractor, a CLI tool for extracting delimiter-based
 // values from PDF files using MuPDF's mutool binary.
 //
 // Architecture Overview:
@@ -89,7 +89,7 @@ type Config struct {
 func main() {
 	cfg, showVersion := parseFlags()
 	if showVersion {
-		fmt.Printf("go-pdf-extract version %s\n", version)
+		fmt.Printf("go-pdf-extractor version %s\n", version)
 		os.Exit(0)
 	}
 	var exitCode int
@@ -111,11 +111,8 @@ func main() {
 func run(cfg Config) (int, error) {
 	// Phase 1: Validate configuration
 	// Distinguishes path errors (code 3) from other config errors (code 1)
-	if err := validateConfig(&cfg); err != nil {
-		if strings.Contains(err.Error(), "workspace path") {
-			return ExitPathError, err
-		}
-		return ExitConfigError, err
+	if exitCode, err := validateAndMapConfig(&cfg); err != nil {
+		return exitCode, err
 	}
 
 	// Phase 2: Locate and validate mutool binary
@@ -169,11 +166,8 @@ func run(cfg Config) (int, error) {
 // Returns (exitCode, error) with appropriate exit code for each failure type.
 func runDetect(cfg Config) (int, error) {
 	// Validate required flags first (reuse validateConfig logic)
-	if err := validateConfig(&cfg); err != nil {
-		if strings.Contains(err.Error(), "workspace path") {
-			return ExitPathError, fmt.Errorf("[exit %d] %v", ExitPathError, err)
-		}
-		return ExitConfigError, fmt.Errorf("[exit %d] %v", ExitConfigError, err)
+	if exitCode, err := validateAndMapConfig(&cfg); err != nil {
+		return exitCode, fmt.Errorf("[exit %d] %v", exitCode, err)
 	}
 
 	fmt.Println("Running prerequisite detection...")
@@ -235,7 +229,8 @@ func testMutoolExecution(mutoolPath string) error {
 	defer cancel()
 
 	// #nosec G204 -- mutoolPath is sanitized and validated by findMutool()
-	cmd := exec.CommandContext(ctx, mutoolPath, "-v")
+	// not remediated: mutoolPath must be dynamic; inputs are pre-validated by findMutool()
+	cmd := exec.CommandContext(ctx, mutoolPath, "-v") // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("execution failed: %v (output: %s)", err, strings.TrimSpace(string(output)))
@@ -249,22 +244,13 @@ func testMutoolExecution(mutoolPath string) error {
 func detectSearchPattern(files []string, mutoolPath, search string, timeout time.Duration) (bool, int, error) {
 	failedCount := 0
 	for i, file := range files {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-
-		// #nosec G204 -- mutoolPath validated by findMutool(); file from filepath.Glob
-		cmd := exec.CommandContext(ctx, mutoolPath, "draw", "-q", "-F", "txt", "-o", "-", file)
-		setupProcessGroup(cmd)
-
-		output, err := cmd.Output()
-		cancel()
-
-		if err != nil {
-			killProcessGroup(cmd) // Ensure no orphaned child processes
+		result := processFile(file, mutoolPath, search, timeout)
+		if result.Error != "" {
 			failedCount++
 			continue // Skip files that fail to process
 		}
 
-		if strings.Contains(string(output), search) {
+		if result.Value != nil {
 			return true, i + 1, nil
 		}
 	}
@@ -398,6 +384,18 @@ func validateConfig(cfg *Config) error {
 	return nil
 }
 
+// validateAndMapConfig validates the configuration and returns the appropriate exit code and error.
+// Distinguishes workspace path errors (ExitPathError) from other configuration errors (ExitConfigError).
+func validateAndMapConfig(cfg *Config) (int, error) {
+	if err := validateConfig(cfg); err != nil {
+		if strings.Contains(err.Error(), "workspace path") {
+			return ExitPathError, err
+		}
+		return ExitConfigError, err
+	}
+	return ExitSuccess, nil
+}
+
 // sanitizePath cleans and validates a filesystem path to prevent path traversal attacks.
 // SECURITY: All user-supplied paths must pass through this function before use.
 //
@@ -447,17 +445,21 @@ func sanitizePath(path string) (string, error) {
 	return absPath, nil
 }
 
-// validatePathSecurity checks that a path is not a root or system directory.
-// SECURITY: Prevents writes to sensitive system locations.
 func validatePathSecurity(absPath string) error {
+	return validatePathSecurityOS(absPath, runtime.GOOS)
+}
+
+// validatePathSecurityOS checks that a path is not a root or system directory on the specified OS.
+func validatePathSecurityOS(absPath string, goos string) error {
 	// Normalize for comparison
 	normalized := filepath.Clean(absPath)
 
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		// Windows: handle both drive paths (C:\...) and UNC paths (\\server\share\...)
-		if strings.HasPrefix(normalized, `\\`) {
+		normalizedWin := strings.ReplaceAll(normalized, "/", "\\")
+		if strings.HasPrefix(normalizedWin, `\\`) {
 			// UNC path: \\server\share\dir\file - need at least 4 segments
-			parts := strings.Split(normalized, `\`)
+			parts := strings.Split(normalizedWin, `\`)
 			nonEmpty := 0
 			for _, p := range parts {
 				if p != "" {
@@ -476,9 +478,9 @@ func validatePathSecurity(absPath string) error {
 					return fmt.Errorf("administrative shares are not allowed")
 				}
 			}
-		} else if len(normalized) >= 3 && normalized[1] == ':' {
+		} else if len(normalizedWin) >= 3 && normalizedWin[1] == ':' {
 			// Drive path: C:\dir\file - need at least 2 segments after drive
-			parts := strings.Split(normalized[3:], string(filepath.Separator))
+			parts := strings.Split(normalizedWin[3:], `\`)
 			nonEmpty := 0
 			for _, p := range parts {
 				if p != "" {
@@ -493,12 +495,16 @@ func validatePathSecurity(absPath string) error {
 		}
 	} else {
 		// Unix: block bare root and files directly in root
-		if normalized == "/" {
+		normalizedUnix := strings.ReplaceAll(normalized, "\\", "/")
+		if strings.HasPrefix(normalizedUnix, "//") {
+			normalizedUnix = normalizedUnix[1:]
+		}
+		if normalizedUnix == "/" {
 			return fmt.Errorf("root paths are not allowed")
 		}
 
 		// Must have at least 2 path segments (e.g., /dir/file, not /file)
-		parts := strings.Split(normalized, "/")
+		parts := strings.Split(normalizedUnix, "/")
 		nonEmpty := 0
 		for _, p := range parts {
 			if p != "" {
@@ -512,7 +518,7 @@ func validatePathSecurity(absPath string) error {
 		// Block system directories
 		systemDirs := []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc"}
 		for _, sysDir := range systemDirs {
-			if normalized == sysDir || strings.HasPrefix(normalized, sysDir+"/") {
+			if normalizedUnix == sysDir || strings.HasPrefix(normalizedUnix, sysDir+"/") {
 				return fmt.Errorf("system directory %s is not allowed", sysDir)
 			}
 		}
@@ -716,7 +722,8 @@ func processFile(filePath, mutoolPath, search string, timeout time.Duration) Res
 	// -F txt: output format is plain text
 	// -o -: write to stdout (captured by cmd.Output())
 	// #nosec G204 -- mutoolPath is sanitized and validated as executable by findMutool(); filePath comes from filepath.Glob
-	cmd := exec.CommandContext(ctx, mutoolPath, "draw", "-q", "-F", "txt", "-o", "-", filePath)
+	// not remediated: mutoolPath must be dynamic; inputs are pre-validated by findMutool()
+	cmd := exec.CommandContext(ctx, mutoolPath, "draw", "-q", "-F", "txt", "-o", "-", filePath) // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 
 	// Configure process group for clean termination (platform-specific)
 	setupProcessGroup(cmd)
@@ -799,7 +806,7 @@ func writeOutput(results []Result, format, outputPath string) error {
 	// SECURITY: Write to temp file then atomic rename to prevent TOCTOU attacks.
 	// This avoids the race between checking symlink status and opening the file.
 	outputDir := filepath.Dir(outputPath)
-	tempFile, err := os.CreateTemp(outputDir, ".go-pdf-extract-*.tmp")
+	tempFile, err := os.CreateTemp(outputDir, ".go-pdf-extractor-*.tmp")
 	if err != nil {
 		return fmt.Errorf("cannot create temp file: %v", err)
 	}
