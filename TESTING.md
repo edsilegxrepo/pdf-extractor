@@ -128,7 +128,7 @@ Total: **118+ tests** covering all functionality.
 
 | Test | Coverage |
 |------|----------|
-| `TestExtractValues` | Pattern matching: single/multiple matches, spaces, deduplication, different delimiters, CRLF/CR/mixed line endings |
+| `TestExtractValues` | Pattern matching: single/multiple matches, spaces, deduplication, different delimiters, CRLF/CR/mixed line endings, UTF-8/Unicode, nested delimiters, literal regex delimiter matching |
 | `TestValidateConfig` | All required flags, invalid format, non-existent path, path is file not directory |
 | `TestFindMutool` | Flag path, env path, precedence (flag > env > PATH), not found errors |
 | `TestFindFiles` | Glob matching, no matches |
@@ -164,6 +164,7 @@ Total: **118+ tests** covering all functionality.
 | `TestIntegration_EndToEnd` | Full workflow simulation | Output file contains both sample files |
 | `TestProcessFilesWorkerPool` | Concurrent processing | All results returned with filenames |
 | `TestProcessFileWithMutoolError` | Process file with mutool error | Error captured in result, no crash |
+| `TestIntegration_MultipleMatches` | Process file with multiple matches | Returns slice of values, correctly ordered and deduplicated |
 
 ### CLI Flag Combination Tests (require mutool, skip with `-short`)
 
@@ -258,11 +259,26 @@ go test -cover ./...
 
 # Preserve test workspace for debugging
 KEEP_TEST_WORKSPACE=1 go test -v ./...
+
+# Run tests with data race detector (requires CGO and gcc/clang compiler)
+CGO_ENABLED=1 go test -race -v ./...
+
+# Windows PowerShell race detector equivalent
+$env:CGO_ENABLED="1"; go test -race -v ./...
 ```
+
+#### Race Detector Prerequisites
+
+The Go race detector uses thread instrumentation which requires **CGO** (`CGO_ENABLED=1`) and a host C compiler:
+*   **Linux**: Install `build-essential` or `gcc` (`sudo apt-get install build-essential` or `sudo yum groupinstall "Development Tools"`).
+*   **Windows**: Requires a Windows port of GCC such as **MinGW-w64**. It can be installed via MSYS2 or Chocolatey (`choco install mingw`). Ensure the `gcc` binary is added to your system `PATH` variable.
+
+If the Go toolchain fails to locate your C compiler, or if multiple compilers are installed, explicitly specify the compiler path using the **`CC`** environment variable (e.g., `$env:CC="gcc"` or `$env:CC="x86_64-w64-mingw32-gcc"` in Windows PowerShell, or `export CC=gcc` in Unix shells).
+
 
 ## 8. Code Coverage
 
-**Total coverage: 88.2%** (target: 80%)
+**Total coverage: 88.5%** (target: 80%)
 
 ### Calculating Coverage
 
@@ -288,7 +304,7 @@ go test -coverprofile=$env:TEMP/coverage.out ./...; go tool cover -func=$env:TEM
 | `validateAndMapConfig` | 100.0% |
 | `sanitizePath` | 93.8% |
 | `sanitizeTSV` | 100.0% |
-| `processFile` | 95.0% |
+| `processFile` | 100.0% |
 | `run` | 86.4% |
 | `runDetect` | 87.1% |
 | `detectSearchPattern` | 72.7% |

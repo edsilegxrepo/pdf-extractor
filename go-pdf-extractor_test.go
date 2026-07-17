@@ -172,6 +172,24 @@ func TestExtractValues(t *testing.T) {
 			search:   "DSFN:",
 			expected: []string{"value1", "value2", "value3"},
 		},
+		{
+			name:     "UTF-8/Unicode values",
+			text:     "DSFN:Müller-AHP.pdf\nDSFN: 測試_123.pdf\nDSFN: 😊_Smile.pdf",
+			search:   "DSFN:",
+			expected: []string{"Müller-AHP.pdf", "測試_123.pdf", "😊_Smile.pdf"},
+		},
+		{
+			name:     "nested delimiter in value",
+			text:     "DSFN:DSFN:nested_value",
+			search:   "DSFN:",
+			expected: []string{"DSFN:nested_value"},
+		},
+		{
+			name:     "regex characters in delimiter are matched literally",
+			text:     "DSFN[123]: value\n*DSFN: other",
+			search:   "DSFN[123]:",
+			expected: []string{"value"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2404,6 +2422,37 @@ func TestMain_Version(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "version") {
 		t.Errorf("expected version output, got: %s", string(output))
+	}
+}
+
+// TestIntegration_MultipleMatches verifies that a PDF containing multiple matches
+// is processed correctly and returns a slice of values.
+func TestIntegration_MultipleMatches(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath := requireMutool(t)
+
+	tmpDir := t.TempDir()
+	testPDF := filepath.Join(tmpDir, "multiple_matches.pdf")
+
+	// Create a PDF with multiple matches on separate lines using text positioning operators
+	content := "DSFN:value1) Tj 0 -15 Td (DSFN:value2"
+	createTestPDFWithContent(t, testPDF, content)
+
+	result := processFile(testPDF, mutoolPath, "DSFN:", 30*time.Second)
+	if result.Error != "" {
+		t.Fatalf("processFile failed: %s", result.Error)
+	}
+
+	values, ok := result.Value.([]string)
+	if !ok {
+		t.Fatalf("expected []string value for multiple matches, got %T (%v)", result.Value, result.Value)
+	}
+
+	if len(values) != 2 || values[0] != "value1" || values[1] != "value2" {
+		t.Errorf("expected values [value1, value2], got %v", values)
 	}
 }
 
