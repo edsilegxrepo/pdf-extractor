@@ -247,7 +247,7 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name:      "missing format",
 			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Output: outputPath},
-			wantError: "missing required flag: -format",
+			wantError: "",
 		},
 		{
 			name:      "invalid format",
@@ -270,6 +270,11 @@ func TestValidateConfig(t *testing.T) {
 			wantError: "workspace path is not a directory",
 		},
 		{
+			name:      "uppercase format normalization",
+			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Format: "JSON", Output: outputPath},
+			wantError: "",
+		},
+		{
 			name:      "valid config",
 			cfg:       Config{Path: tmpDir, FilePattern: "*.pdf", Search: "DSFN:", Format: "json", Output: outputPath},
 			wantError: "",
@@ -282,6 +287,12 @@ func TestValidateConfig(t *testing.T) {
 			if tt.wantError == "" {
 				if err != nil {
 					t.Errorf("expected no error, got: %v", err)
+				}
+				if tt.name == "missing format" && tt.cfg.Format != "json" {
+					t.Errorf("expected missing format to default to %q, got %q", "json", tt.cfg.Format)
+				}
+				if tt.name == "uppercase format normalization" && tt.cfg.Format != "json" {
+					t.Errorf("expected format to be normalized to %q, got %q", "json", tt.cfg.Format)
 				}
 			} else {
 				if err == nil {
@@ -505,7 +516,7 @@ func TestFindFiles_PathTraversal(t *testing.T) {
 // =============================================================================
 // Tests writeJSON() and writeTSV() which serialize results to output formats.
 
-// TestWriteJSON verifies NDJSON output format generation.
+// TestWriteJSON verifies standard JSON array output format generation.
 func TestWriteJSON(t *testing.T) {
 	results := []Result{
 		{Filename: "doc1.pdf", Value: "123"},
@@ -517,6 +528,38 @@ func TestWriteJSON(t *testing.T) {
 	writer := bufio.NewWriter(&buf)
 
 	err := writeJSON(writer, results)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if err := writer.Flush(); err != nil {
+		t.Errorf("flush error: %v", err)
+	}
+
+	var parsed []Result
+	err = json.Unmarshal(buf.Bytes(), &parsed)
+	if err != nil {
+		t.Errorf("invalid JSON array: %v", err)
+	}
+	if len(parsed) != 3 {
+		t.Errorf("expected 3 items, got %d", len(parsed))
+	}
+	if parsed[0].Filename != "doc1.pdf" || parsed[0].Value != "123" {
+		t.Errorf("unexpected first result: %+v", parsed[0])
+	}
+}
+
+// TestWriteNDJSON verifies NDJSON output format generation.
+func TestWriteNDJSON(t *testing.T) {
+	results := []Result{
+		{Filename: "doc1.pdf", Value: "123"},
+		{Filename: "doc2.pdf", Value: []string{"456", "789"}},
+		{Filename: "doc3.pdf", Error: "test error"},
+	}
+
+	var buf bytes.Buffer
+	writer := bufio.NewWriter(&buf)
+
+	err := writeNDJSON(writer, results)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -794,9 +837,12 @@ func TestIntegration_WorkersFlag(t *testing.T) {
 				t.Fatalf("failed to read output: %v", err)
 			}
 
-			lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-			if len(lines) != 2 {
-				t.Errorf("expected 2 results, got %d", len(lines))
+			var parsed []Result
+			if err := json.Unmarshal(content, &parsed); err != nil {
+				t.Fatalf("invalid JSON array: %v", err)
+			}
+			if len(parsed) != 2 {
+				t.Errorf("expected 2 results, got %d", len(parsed))
 			}
 		})
 	}
@@ -813,6 +859,18 @@ func TestWriteOutputEmptyResults(t *testing.T) {
 	t.Run("empty json", func(t *testing.T) {
 		outputFile := filepath.Join(tmpDir, "empty.json")
 		err := writeOutput([]Result{}, "json", outputFile)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		content, _ := os.ReadFile(outputFile)
+		if strings.TrimSpace(string(content)) != "[]" {
+			t.Errorf("expected '[]', got %q", string(content))
+		}
+	})
+
+	t.Run("empty ndjson", func(t *testing.T) {
+		outputFile := filepath.Join(tmpDir, "empty.ndjson")
+		err := writeOutput([]Result{}, "ndjson", outputFile)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -904,9 +962,12 @@ func TestRun_Success(t *testing.T) {
 		t.Fatalf("failed to read output file: %v", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-	if len(lines) != 2 {
-		t.Errorf("expected 2 lines, got %d", len(lines))
+	var parsed []Result
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		t.Fatalf("invalid JSON array: %v", err)
+	}
+	if len(parsed) != 2 {
+		t.Errorf("expected 2 results, got %d", len(parsed))
 	}
 }
 
@@ -1124,7 +1185,7 @@ func TestRun_OutputWriteError(t *testing.T) {
 // Systematically test all CLI flag combinations to ensure they work together.
 // Each test verifies a specific flag or combination of flags.
 
-// TestIntegration_FormatJSON verifies -format json produces valid NDJSON.
+// TestIntegration_FormatJSON verifies -format json produces valid JSON array.
 func TestIntegration_FormatJSON(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -1151,11 +1212,50 @@ func TestIntegration_FormatJSON(t *testing.T) {
 	}
 
 	content, _ := os.ReadFile(outputFile)
+	var results []map[string]interface{}
+	if err := json.Unmarshal(content, &results); err != nil {
+		t.Errorf("invalid JSON array: %s", string(content))
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+// TestIntegration_FormatNDJSON verifies -format ndjson produces valid NDJSON.
+func TestIntegration_FormatNDJSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath := requireMutool(t)
+
+	workspaceDir := createTestWorkspace(t)
+	outputFile := filepath.Join(workspaceDir, "format_ndjson.json")
+
+	cfg := Config{
+		Path:        testfilesPath(t),
+		FilePattern: "*.pdf",
+		Search:      "DSFN:",
+		Format:      "ndjson",
+		Output:      outputFile,
+		MutoolBin:   mutoolPath,
+		Timeout:     30 * time.Second,
+	}
+
+	_, err := run(cfg)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	content, _ := os.ReadFile(outputFile)
 	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	if len(lines) != 2 {
+		t.Errorf("expected 2 lines, got %d", len(lines))
+	}
 	for _, line := range lines {
 		var r map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &r); err != nil {
-			t.Errorf("invalid JSON line: %s", line)
+			t.Errorf("invalid NDJSON line: %s", line)
 		}
 	}
 }
@@ -1379,6 +1479,7 @@ func TestIntegration_AllFlagsCombined(t *testing.T) {
 		outputExt   string
 	}{
 		{"json_all_pdf", "json", "*.pdf", "DSFN:", ".json"},
+		{"ndjson_all_pdf", "ndjson", "*.pdf", "DSFN:", ".json"},
 		{"tsv_all_pdf", "tsv", "*.pdf", "DSFN:", ".tsv"},
 		{"json_single_pdf", "json", "sample001.pdf", "DSFN:", ".json"},
 		{"tsv_single_pdf", "tsv", "sample002.pdf", "DSFN:", ".tsv"},
@@ -1442,6 +1543,35 @@ func TestWriteOutputWithAllResultTypes(t *testing.T) {
 	t.Run("json with all types", func(t *testing.T) {
 		outFile := filepath.Join(tmpDir, "all.json")
 		err := writeOutput(results, "json", outFile)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		content, _ := os.ReadFile(outFile)
+		var parsed []Result
+		if err := json.Unmarshal(content, &parsed); err != nil {
+			t.Fatalf("invalid JSON array: %v", err)
+		}
+		if len(parsed) != 4 {
+			t.Errorf("expected 4 results, got %d", len(parsed))
+		}
+		if parsed[0].Filename != "single.pdf" || parsed[0].Value != "one" {
+			t.Errorf("unexpected first result: %+v", parsed[0])
+		}
+		vals, ok := parsed[1].Value.([]interface{})
+		if !ok || len(vals) != 3 || vals[0] != "a" || vals[1] != "b" || vals[2] != "c" {
+			t.Errorf("expected array value in second result: %+v", parsed[1].Value)
+		}
+		if parsed[2].Value != nil {
+			t.Errorf("expected null value in third result: %+v", parsed[2].Value)
+		}
+		if parsed[3].Error != "corrupted" {
+			t.Errorf("expected error in fourth result: %s", parsed[3].Error)
+		}
+	})
+
+	t.Run("ndjson with all types", func(t *testing.T) {
+		outFile := filepath.Join(tmpDir, "all.ndjson")
+		err := writeOutput(results, "ndjson", outFile)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1581,7 +1711,7 @@ func TestIntegration_BatchProcessing(t *testing.T) {
 	}
 }
 
-// TestIntegration_JSONOutput verifies NDJSON output format with real PDFs.
+// TestIntegration_JSONOutput verifies standard JSON array output format with real PDFs.
 func TestIntegration_JSONOutput(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -1599,6 +1729,48 @@ func TestIntegration_JSONOutput(t *testing.T) {
 	workspaceDir := createTestWorkspace(t)
 	outputFile := filepath.Join(workspaceDir, "output.json")
 	err = writeOutput(results, "json", outputFile)
+	if err != nil {
+		t.Fatalf("failed to write output: %v", err)
+	}
+
+	content, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+
+	var parsed []Result
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		t.Fatalf("invalid JSON array output: %v", err)
+	}
+	if len(parsed) != len(files) {
+		t.Errorf("expected %d results, got %d", len(files), len(parsed))
+	}
+
+	for i, r := range parsed {
+		if r.Filename == "" {
+			t.Errorf("item %d: missing filename", i)
+		}
+	}
+}
+
+// TestIntegration_NDJSONOutput verifies NDJSON output format with real PDFs.
+func TestIntegration_NDJSONOutput(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	mutoolPath := requireMutool(t)
+
+	files, err := findFiles("testfiles", "*.pdf")
+	if err != nil {
+		t.Fatalf("failed to find files: %v", err)
+	}
+
+	results := processFiles(files, mutoolPath, "DSFN:", 30*time.Second, 0)
+
+	workspaceDir := createTestWorkspace(t)
+	outputFile := filepath.Join(workspaceDir, "output.ndjson")
+	err = writeOutput(results, "ndjson", outputFile)
 	if err != nil {
 		t.Fatalf("failed to write output: %v", err)
 	}
@@ -1728,16 +1900,17 @@ func TestIntegration_EndToEnd(t *testing.T) {
 		t.Fatalf("failed to read output: %v", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-	if len(lines) != 2 {
-		t.Errorf("expected 2 result lines, got %d", len(lines))
+	var parsed []Result
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		t.Fatalf("invalid JSON array output: %v", err)
+	}
+	if len(parsed) != 2 {
+		t.Errorf("expected 2 results, got %d", len(parsed))
 	}
 
 	foundSample001 := false
 	foundSample002 := false
-	for _, line := range lines {
-		var r Result
-		_ = json.Unmarshal([]byte(line), &r)
+	for _, r := range parsed {
 		if r.Filename == "sample001.pdf" {
 			foundSample001 = true
 		}

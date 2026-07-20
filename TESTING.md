@@ -107,7 +107,8 @@
 ### Output File Verification
 | Format | Verification |
 |--------|--------------|
-| JSON | Valid NDJSON, each line parses correctly |
+| JSON | Valid standard JSON array of objects |
+| NDJSON | Valid Newline-Delimited JSON (NDJSON) |
 | TSV | Valid TSV with header, correct column count |
 
 ### Test Data Location
@@ -158,7 +159,8 @@ Total: **118+ tests** covering all functionality.
 | `TestIntegration_SingleFileWithMatch` | Process sample001.pdf | Extracts `Employee ID_X_X_X_X_Eag-AHP.pdf` from `DSFN:Employee ID_X_X_X_X_Eag-AHP.pdf` |
 | `TestIntegration_SingleFileWithSpaceAfterDelimiter` | Process sample002.pdf | Extracts `327078_X_X_X_X_Wage.pdf` from `DSFN: 327078_X_X_X_X_Wage.pdf` |
 | `TestIntegration_BatchProcessing` | Process all testfiles PDFs concurrently | Both files processed, 2 matches found |
-| `TestIntegration_JSONOutput` | Write results to JSON file | Valid NDJSON with correct line count |
+| `TestIntegration_JSONOutput` | Write results to JSON file | Valid standard JSON array |
+| `TestIntegration_NDJSONOutput` | Write results to NDJSON file | Valid NDJSON with correct line count |
 | `TestIntegration_TSVOutput` | Write results to TSV file | Valid TSV with header and data rows |
 | `TestIntegration_NoMatchFile` | Search for non-existent pattern | Returns nil value, no error |
 | `TestIntegration_EndToEnd` | Full workflow simulation | Output file contains both sample files |
@@ -170,7 +172,8 @@ Total: **118+ tests** covering all functionality.
 
 | Test | Flags Tested | Expected Result |
 |------|--------------|-----------------|
-| `TestIntegration_FormatJSON` | `-format json` | Valid JSON output, each line parseable |
+| `TestIntegration_FormatJSON` | `-format json` | Valid standard JSON array |
+| `TestIntegration_FormatNDJSON` | `-format ndjson` | Valid NDJSON output, each line parseable |
 | `TestIntegration_FormatTSV` | `-format tsv` | Valid TSV with header row |
 | `TestIntegration_DifferentSearchPattern` | `-search NONEXISTENT:` | All results have null value |
 | `TestIntegration_FilePatternSpecific` | `-file-pattern sample001.pdf` | Only one file processed |
@@ -237,8 +240,10 @@ Total: **118+ tests** covering all functionality.
 | `TestValidateExecutable_Directory` | Directories are rejected as executables |
 | `TestValidateExecutable_NotExists` | Non-existent paths are rejected as executables |
 | `TestValidateExecutable_NotExecutable` | Non-executable files rejected (Unix only) |
-| `TestWriteJSON_Success` | Successful JSON writing |
-| `TestWriteJSON_Error` | JSON write error handling when the writer fails |
+| `TestWriteJSON_Success` | Successful standard JSON array writing |
+| `TestWriteJSON_Error` | JSON array write error handling when the writer fails |
+| `TestWriteNDJSON_Success` | Successful NDJSON writing |
+| `TestWriteNDJSON_Error` | NDJSON write error handling when the writer fails |
 | `TestMain_Version` | Subprocess-based test verifying version output, main, and parseFlags |
 | `TestKillProcessGroup_NilProcess` | Handles nil Process field without error |
 | `TestKillProcessGroup_AlreadyFinished` | Returns nil error if the process already exited (ignores expected dead-process errors) |

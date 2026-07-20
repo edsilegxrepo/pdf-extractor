@@ -81,19 +81,13 @@ flowchart TB
 - Dependency on external binary availability
 - Inter-process communication overhead
 
-#### 1.2.3 NDJSON Output Format
+#### 1.2.3 Output Formats: JSON Array and NDJSON
 
-**Decision**: Use newline-delimited JSON rather than JSON array.
+**Decision**: Support both standard JSON Array (default) and Newline-Delimited JSON (NDJSON) formats.
 
 **Rationale**:
-- Streaming-friendly format for large result sets
-- Each line is independently parseable
-- Compatible with common log processing tools (jq, grep)
-- Simpler error handling (partial output remains valid)
-
-**Trade-offs**:
-- Not valid JSON as a single document
-- Requires line-by-line parsing by consumers
+- Standard JSON Array is the default to provide standard-compliant single document representation of all results that integrates easily with standard JSON parsers.
+- NDJSON is supported as an option (`-format ndjson`) for streaming-friendly parsing of large result sets where each line is independently parseable and compatible with tools like `jq`.
 
 #### 1.2.4 Build Tags for Platform-Specific Code
 
@@ -250,6 +244,7 @@ classDiagram
     processFile --> Result : produces
     
     writeOutput --> writeJSON : JSON format
+    writeOutput --> writeNDJSON : NDJSON format
     writeOutput --> writeTSV : TSV format
 
     class sanitizePath {
@@ -313,6 +308,8 @@ sequenceDiagram
     
     alt format == "json"
         Writer->>Writer: writeJSON()
+    else format == "ndjson"
+        Writer->>Writer: writeNDJSON()
     else format == "tsv"
         Writer->>Writer: writeTSV()
     end

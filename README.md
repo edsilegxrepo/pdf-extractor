@@ -20,7 +20,7 @@ go-pdf-extractor processes batches of PDF files to extract text values that foll
 
 - Concurrent processing with configurable worker pool (2-16 workers)
 - Support for custom delimiter patterns
-- NDJSON and TSV output formats
+- JSON, NDJSON, and TSV output formats
 - Per-file timeout with automatic process cleanup
 - Comprehensive input sanitization
 - Cross-platform compatibility (Windows/Linux)
@@ -226,13 +226,13 @@ go-pdf-extractor [OPTIONS]
 | `-path` | string | Workspace directory containing PDF files to process |
 | `-file-pattern` | string | Glob pattern for file selection (e.g., `*.pdf`, `invoice_*.pdf`) |
 | `-search` | string | Delimiter pattern to search for in PDF content (e.g., `DSFN:`) |
-| `-format` | string | Output format: `json` or `tsv` |
 | `-output` | string | Path to output file (created or overwritten) |
 
 ### 4.3 Optional Arguments
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `-format` | string | `json` | Output format: `json`, `ndjson`, or `tsv` |
 | `-mutool-bin` | string | Auto-detect | Explicit path to mutool binary |
 | `-workers` | int | NumCPU * 2 | Number of concurrent workers (min: 2, max: 16) |
 | `-timeout` | duration | 30s | Timeout for each mutool invocation |
@@ -265,8 +265,8 @@ The tool returns detailed exit codes to allow orchestration platforms (e.g., GoA
 
 ### 4.6 Output Formats
 
-#### 4.6.1 Newline-Delimited JSON (NDJSON)
-When `-format json` is specified, the output file contains one JSON object per line (streaming-friendly format):
+#### 4.6.1 Standard JSON Array
+When `-format json` is specified (or the flag is omitted as it is the default), the output file contains a standard JSON array of objects representing all results:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -274,12 +274,30 @@ When `-format json` is specified, the output file contains one JSON object per l
 | `value` | string, array, or null | Extracted value(s); null if no match found. Array if multiple matches are found in the same file. |
 | `error` | string (optional) | Error message if processing failed for this specific file |
 
-Example line:
+Example content:
 ```json
-{"filename":"doc1.pdf","value":"327078_X_X_X_X_Wage.pdf"}
+[
+  {"filename":"doc1.pdf","value":"327078_X_X_X_X_Wage.pdf"},
+  {"filename":"doc2.pdf","value":null}
+]
 ```
 
-#### 4.6.2 Tab-Separated Values (TSV)
+#### 4.6.2 Newline-Delimited JSON (NDJSON)
+When `-format ndjson` is specified, the output file contains one JSON object per line (streaming-friendly format):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `filename` | string | Base name of the processed PDF file |
+| `value` | string, array, or null | Extracted value(s); null if no match found. Array if multiple matches are found in the same file. |
+| `error` | string (optional) | Error message if processing failed for this specific file |
+
+Example content:
+```json
+{"filename":"doc1.pdf","value":"327078_X_X_X_X_Wage.pdf"}
+{"filename":"doc2.pdf","value":null}
+```
+
+#### 4.6.3 Tab-Separated Values (TSV)
 When `-format tsv` is specified, the output file contains a header row followed by tab-separated values:
 
 *   **Format:** `filename<TAB>value<NEWLINE>`
@@ -549,7 +567,9 @@ echo "Test DSFN:12345" | mutool draw -q -F txt -o - /dev/stdin
 3. Create workflow with Execute Command task:
    - Command: `/path/to/go-pdf-extractor`
    - Arguments: `-path "${workspace}" -file-pattern "*.pdf" -search "DSFN:" -format json -output "${workspace}/routing.json"`
-   Note: use folder variables instead of hardcoded values
+   Note: use folder variables instead of hardcoded values.
+   > [!IMPORTANT]
+   > Legacy migration note: `-format json` (and default format) now outputs a standard JSON array instead of newline-delimited JSON (NDJSON). If your existing GoAnywhere workflow parses the output line-by-line, change the argument to `-format ndjson` to maintain the old behavior.
 4. Add conditional routing based on exit code
 5. Parse output file for document routing decisions
 

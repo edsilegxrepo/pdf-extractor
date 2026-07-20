@@ -72,7 +72,7 @@ type Config struct {
 	Path        string        // Workspace directory containing PDF files
 	FilePattern string        // Glob pattern for file selection (e.g., "*.pdf")
 	Search      string        // Delimiter pattern to search for (e.g., "DSFN:")
-	Format      string        // Output format: "json" or "tsv"
+	Format      string        // Output format: "json", "ndjson", or "tsv"
 	Output      string        // Path to output file
 	MutoolBin   string        // Optional explicit path to mutool binary
 	Timeout     time.Duration // Per-file timeout for mutool execution
@@ -317,7 +317,7 @@ func parseFlags() (Config, bool) {
 	flag.StringVar(&cfg.Path, "path", "", "Workspace directory containing PDF files")
 	flag.StringVar(&cfg.FilePattern, "file-pattern", "", "Glob pattern for PDF files (e.g., *.pdf)")
 	flag.StringVar(&cfg.Search, "search", "", "Delimiter pattern to search for (e.g., DSFN:)")
-	flag.StringVar(&cfg.Format, "format", "", "Output format: json or tsv")
+	flag.StringVar(&cfg.Format, "format", "json", "Output format: json, ndjson, or tsv")
 	flag.StringVar(&cfg.Output, "output", "", "Output file path")
 
 	// Optional flags - have sensible defaults or are auto-detected
@@ -350,11 +350,12 @@ func validateConfig(cfg *Config) error {
 	if cfg.Search == "" {
 		return fmt.Errorf("missing required flag: -search")
 	}
+	cfg.Format = strings.ToLower(strings.TrimSpace(cfg.Format))
 	if cfg.Format == "" {
-		return fmt.Errorf("missing required flag: -format")
+		cfg.Format = "json"
 	}
-	if cfg.Format != "json" && cfg.Format != "tsv" {
-		return fmt.Errorf("invalid format: %s (must be 'json' or 'tsv')", cfg.Format)
+	if cfg.Format != "json" && cfg.Format != "ndjson" && cfg.Format != "tsv" {
+		return fmt.Errorf("invalid format: %s (must be 'json', 'ndjson', or 'tsv')", cfg.Format)
 	}
 	if cfg.Output == "" {
 		return fmt.Errorf("missing required flag: -output")
@@ -847,6 +848,8 @@ func writeOutput(results []Result, format, outputPath string) error {
 	switch format {
 	case "json":
 		writeErr = writeJSON(writer, results)
+	case "ndjson":
+		writeErr = writeNDJSON(writer, results)
 	case "tsv":
 		writeErr = writeTSV(writer, results)
 	default:
@@ -890,10 +893,19 @@ func writeOutput(results []Result, format, outputPath string) error {
 	return nil
 }
 
-// writeJSON writes results as NDJSON (newline-delimited JSON).
+// writeJSON writes results as a standard JSON array of objects.
+func writeJSON(writer *bufio.Writer, results []Result) error {
+	enc := json.NewEncoder(writer)
+	if err := enc.Encode(results); err != nil {
+		return fmt.Errorf("JSON encode error: %v", err)
+	}
+	return nil
+}
+
+// writeNDJSON writes results as NDJSON (newline-delimited JSON).
 // Each result is a complete JSON object on its own line.
 // This format is streaming-friendly and compatible with tools like jq.
-func writeJSON(writer *bufio.Writer, results []Result) error {
+func writeNDJSON(writer *bufio.Writer, results []Result) error {
 	for _, result := range results {
 		// Marshal result to JSON
 		data, err := json.Marshal(result)

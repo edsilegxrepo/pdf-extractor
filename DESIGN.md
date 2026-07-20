@@ -120,7 +120,7 @@ REF:PO-98765
 ```
 
 ### 3.4 Output Formats
-The utility supports writing results in either Newline-Delimited JSON (NDJSON) or Tab-Separated Values (TSV). See [README.md#46-output-formats](README.md#46-output-formats) for the exact specification of outputs, field types, and multi-value separation (pipe-delimited values).
+The utility supports writing results in standard JSON array, Newline-Delimited JSON (NDJSON), or Tab-Separated Values (TSV). See [README.md#46-output-formats](README.md#46-output-formats) for the exact specification of outputs, field types, and multi-value separation (pipe-delimited values).
 
 ## 4. CLI Execution Model
 For execution command patterns, CLI flags, Windows PowerShell examples, and Unix shell integration scripts, see the user guide in [README.md#5-usage-examples](README.md#5-usage-examples).
