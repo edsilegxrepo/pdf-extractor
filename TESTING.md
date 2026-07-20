@@ -230,10 +230,9 @@ Total: **118+ tests** covering all functionality.
 
 | Test | Coverage |
 |------|----------|
-| `TestSanitizePath_NullByte` | Paths with null bytes are rejected |
-| `TestSanitizePath_Empty` | Empty paths are rejected |
-| `TestSanitizePath_Security` | Path traversal, relative paths, control chars, roots, system dirs, UNC admin shares blocked |
-| `TestValidatePathSecurityOS` | Path security rules for both Windows and Unix OS targets |
+| `TestSanitizePathExt` | Unified sanitization logic (rejects traversals/nulls/empty/control characters for both data and executable paths, validates system directories bypass) |
+| `TestSanitizePath_Security` | Path traversal, relative paths, control chars, roots, system dirs, UNC admin shares blocked for sanitizePath |
+| `TestValidatePathSecurityOS` | Path security rules for both Windows and Unix OS targets (under both data and executable modes) |
 | `TestSanitizePath_ValidPaths` | Valid absolute paths with proper depth are accepted |
 | `TestValidateExecutable_Directory` | Directories are rejected as executables |
 | `TestValidateExecutable_NotExists` | Non-existent paths are rejected as executables |
@@ -316,12 +315,14 @@ go test -coverprofile=$env:TEMP/coverage.out ./...; go tool cover -func=$env:TEM
 | `validateExecutable` | 75.0% |
 | `writeOutput` | 71.9% |
 | `writeJSON` | 77.8% |
-| `validatePathSecurity` | 100.0% |
+| `validatePathSecurityExt` | 100.0% |
 | `validatePathSecurityOS` | 97.6% |
+| `sanitizeExecutablePath` | 100.0% |
+| `sanitizePathExt` | 100.0% |
 | `main` | 33.3% |
 | `parseFlags` | 100.0% |
 
-Note: `main()` and `parseFlags()` are tested via helper subprocess execution tests in the test suite to achieve validation. `validatePathSecurity` has 100.0% coverage by separating target OS validation into a mockable `validatePathSecurityOS` helper function.
+Note: `main()` and `parseFlags()` are tested via helper subprocess execution tests in the test suite to achieve validation. `validatePathSecurityExt` has 100.0% coverage by separating target OS validation into a mockable `validatePathSecurityOS` helper function.
 
 ## 9. Test Workspace Requirements
 

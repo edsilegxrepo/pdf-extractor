@@ -405,9 +405,20 @@ func validateAndMapConfig(cfg *Config) (int, error) {
 //   - No path traversal components (..)
 //   - No null bytes or control characters
 //   - No bare roots (/, C:\, D:\)
-//   - No system directories (/etc, /usr, /bin, /sbin, /boot, /sys, /proc)
+//   - No system directories (/etc, /usr, /bin, /sbin, /boot, /sys, /proc) unless bypassed
 //   - Minimum depth of 2 levels required
 func sanitizePath(path string) (string, error) {
+	return sanitizePathExt(path, false)
+}
+
+// sanitizeExecutablePath cleans and validates a filesystem path for executables.
+// It allows system directories like /bin or /usr, while rejecting other invalid paths.
+func sanitizeExecutablePath(path string) (string, error) {
+	return sanitizePathExt(path, true)
+}
+
+// sanitizePathExt contains the unified sanitization logic for both files and executables.
+func sanitizePathExt(path string, allowSystemDirs bool) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path cannot be empty")
 	}
@@ -439,19 +450,20 @@ func sanitizePath(path string) (string, error) {
 	}
 
 	// Validate path is not a forbidden location
-	if err := validatePathSecurity(absPath); err != nil {
+	if err := validatePathSecurityExt(absPath, allowSystemDirs); err != nil {
 		return "", err
 	}
 
 	return absPath, nil
 }
 
-func validatePathSecurity(absPath string) error {
-	return validatePathSecurityOS(absPath, runtime.GOOS)
+func validatePathSecurityExt(absPath string, allowSystemDirs bool) error {
+	return validatePathSecurityOS(absPath, runtime.GOOS, allowSystemDirs)
 }
 
-// validatePathSecurityOS checks that a path is not a root or system directory on the specified OS.
-func validatePathSecurityOS(absPath string, goos string) error {
+// validatePathSecurityOS checks that a path is not a root directory on the specified OS.
+// If allowSystemDirs is false, it also rejects standard system directories (like /bin or /usr).
+func validatePathSecurityOS(absPath string, goos string, allowSystemDirs bool) error {
 	// Normalize for comparison
 	normalized := filepath.Clean(absPath)
 
@@ -516,11 +528,13 @@ func validatePathSecurityOS(absPath string, goos string) error {
 			return fmt.Errorf("files in root directory are not allowed")
 		}
 
-		// Block system directories
-		systemDirs := []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc"}
-		for _, sysDir := range systemDirs {
-			if normalizedUnix == sysDir || strings.HasPrefix(normalizedUnix, sysDir+"/") {
-				return fmt.Errorf("system directory %s is not allowed", sysDir)
+		// Block system directories if not allowed
+		if !allowSystemDirs {
+			systemDirs := []string{"/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc"}
+			for _, sysDir := range systemDirs {
+				if normalizedUnix == sysDir || strings.HasPrefix(normalizedUnix, sysDir+"/") {
+					return fmt.Errorf("system directory %s is not allowed", sysDir)
+				}
 			}
 		}
 	}
@@ -562,7 +576,7 @@ func validateExecutable(path string) error {
 // Used by findMutool() to validate paths from different sources.
 // The source parameter is included in error messages for diagnostic clarity.
 func validateMutoolPath(path, source string) (string, error) {
-	cleanPath, err := sanitizePath(path)
+	cleanPath, err := sanitizeExecutablePath(path)
 	if err != nil {
 		return "", fmt.Errorf("invalid %s path: %v", source, err)
 	}

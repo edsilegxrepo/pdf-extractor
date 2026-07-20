@@ -75,7 +75,7 @@ All filesystem paths (`-path`, `-output`) are validated against strict security 
 | No path traversal | Paths containing `..` are rejected |
 | No control characters | ASCII 0-31 (null bytes, tabs, etc.) are rejected |
 | No root-level files | Files directly in `/` or `C:\` are rejected |
-| No system directories | Linux system paths are blocked (see below) |
+| No system directories | Linux system paths are blocked for workspace/output (see below) |
 
 #### Blocked System Directories (Linux)
 
@@ -126,7 +126,7 @@ All filesystem paths (`-path`, `-output`) are validated against strict security 
 
 ### 2.8 Subprocess Security
 
-- mutool binary path is validated as an executable before invocation
+- mutool binary path is validated as an executable (system directories like `/bin` and `/usr` are allowed for binaries to support standard system installations)
 - Subprocesses run in isolated process groups for clean termination
 - Context-based timeouts prevent runaway processes
 - No shell interpretation of arguments (direct exec, not shell command)

@@ -2057,23 +2057,62 @@ func TestRunDetect_ExitCodeInErrorMessage(t *testing.T) {
 	}
 }
 
-// TestSanitizePath_NullByte tests that null bytes are rejected.
-func TestSanitizePath_NullByte(t *testing.T) {
-	_, err := sanitizePath("/data/path\x00with\x00nulls")
-	if err == nil {
-		t.Error("expected error for path with null bytes, got nil")
-	}
+// TestSanitizePathExt tests the unified path sanitization logic for both files and executables.
+func TestSanitizePathExt(t *testing.T) {
+	t.Run("common checks", func(t *testing.T) {
+		for _, allowSystemDirs := range []bool{false, true} {
+			// Null byte rejection
+			if _, err := sanitizePathExt("/data/path\x00with\x00nulls", allowSystemDirs); err == nil {
+				t.Errorf("expected error for path with null bytes (allowSystemDirs=%v), got nil", allowSystemDirs)
+			}
+
+			// Empty path rejection
+			if _, err := sanitizePathExt("", allowSystemDirs); err == nil {
+				t.Errorf("expected error for empty path (allowSystemDirs=%v), got nil", allowSystemDirs)
+			}
+
+			// Traversal rejection
+			if _, err := sanitizePathExt("/data/workspace/../../../etc/passwd", allowSystemDirs); err == nil {
+				t.Errorf("expected error for path traversal (allowSystemDirs=%v), got nil", allowSystemDirs)
+			}
+
+			// Relative path rejection
+			if _, err := sanitizePathExt("relative/path/file.txt", allowSystemDirs); err == nil {
+				t.Errorf("expected error for relative path (allowSystemDirs=%v), got nil", allowSystemDirs)
+			}
+
+			// Control characters rejection
+			if _, err := sanitizePathExt("/data/path\twith\ttabs", allowSystemDirs); err == nil {
+				t.Errorf("expected error for control characters (allowSystemDirs=%v), got nil", allowSystemDirs)
+			}
+		}
+	})
+
+	t.Run("system directory allowance", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("skipping Unix-specific system directory tests on Windows")
+		}
+
+		systemPaths := []string{
+			"/usr/bin/mutool",
+			"/bin/mutool",
+		}
+
+		for _, path := range systemPaths {
+			// Should fail when allowSystemDirs is false
+			if _, err := sanitizePathExt(path, false); err == nil {
+				t.Errorf("expected error for system directory path %q when allowSystemDirs=false, got nil", path)
+			}
+
+			// Should succeed when allowSystemDirs is true
+			if _, err := sanitizePathExt(path, true); err != nil {
+				t.Errorf("unexpected error for system directory path %q when allowSystemDirs=true: %v", path, err)
+			}
+		}
+	})
 }
 
-// TestSanitizePath_Empty tests that empty paths are rejected.
-func TestSanitizePath_Empty(t *testing.T) {
-	_, err := sanitizePath("")
-	if err == nil {
-		t.Error("expected error for empty path, got nil")
-	}
-}
-
-// TestSanitizePath_Security tests path security validation.
+// TestSanitizePath_Security tests path security validation for sanitizePath (which blocks system directories).
 func TestSanitizePath_Security(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2178,47 +2217,71 @@ func TestSanitizePath_Security(t *testing.T) {
 	}
 }
 
-// TestValidatePathSecurityOS checks path security rules for both Windows and Unix OS targets.
+// TestValidatePathSecurityOS checks path security rules for both Windows and Unix OS targets under both data and executable modes.
 func TestValidatePathSecurityOS(t *testing.T) {
 	t.Run("unix rules", func(t *testing.T) {
 		tests := []struct {
-			path    string
-			wantErr bool
+			path            string
+			allowSystemDirs bool
+			wantErr         bool
 		}{
-			{"/", true},
-			{"/file.txt", true},
-			{"/etc", true},
-			{"/etc/hosts", true},
-			{"/usr/bin/go", true},
-			{"/data/workspace/file.txt", false},
+			// Basic Unix restrictions (always restricted)
+			{"/", false, true},
+			{"/", true, true},
+			{"/file.txt", false, true},
+			{"/file.txt", true, true},
+
+			// System directories (conditionally allowed)
+			{"/etc", false, true},
+			{"/etc", true, true}, // directly under root, needs at least 2 segments
+			{"/etc/hosts", false, true},
+			{"/etc/hosts", true, false},
+			{"/usr/bin/go", false, true},
+			{"/usr/bin/go", true, false},
+			{"/bin/sh", false, true},
+			{"/bin/sh", true, false},
+
+			// Normal workspace path (always allowed)
+			{"/data/workspace/file.txt", false, false},
+			{"/data/workspace/file.txt", true, false},
 		}
 		for _, tt := range tests {
-			err := validatePathSecurityOS(tt.path, "linux")
+			err := validatePathSecurityOS(tt.path, "linux", tt.allowSystemDirs)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validatePathSecurityOS(%q, \"linux\") error = %v, wantErr %v", tt.path, err, tt.wantErr)
+				t.Errorf("validatePathSecurityOS(%q, \"linux\", %v) error = %v, wantErr %v", tt.path, tt.allowSystemDirs, err, tt.wantErr)
 			}
 		}
 	})
 
 	t.Run("windows rules", func(t *testing.T) {
 		tests := []struct {
-			path    string
-			wantErr bool
+			path            string
+			allowSystemDirs bool
+			wantErr         bool
 		}{
-			{`C:\`, true},
-			{`C:\file.txt`, true},
-			{`\\server\share`, true},
-			{`\\server\share\`, true},
-			{`\\server\C$`, true},
-			{`\\server\C$\file.txt`, true},
-			{`\\server\share\dir\file.txt`, false},
-			{`C:\data\file.txt`, false},
-			{`invalid_format`, true},
+			{`C:\`, false, true},
+			{`C:\`, true, true},
+			{`C:\file.txt`, false, true},
+			{`C:\file.txt`, true, true},
+			{`\\server\share`, false, true},
+			{`\\server\share`, true, true},
+			{`\\server\share\`, false, true},
+			{`\\server\share\`, true, true},
+			{`\\server\C$`, false, true},
+			{`\\server\C$`, true, true},
+			{`\\server\C$\file.txt`, false, true},
+			{`\\server\C$\file.txt`, true, true},
+			{`\\server\share\dir\file.txt`, false, false},
+			{`\\server\share\dir\file.txt`, true, false},
+			{`C:\data\file.txt`, false, false},
+			{`C:\data\file.txt`, true, false},
+			{`invalid_format`, false, true},
+			{`invalid_format`, true, true},
 		}
 		for _, tt := range tests {
-			err := validatePathSecurityOS(tt.path, "windows")
+			err := validatePathSecurityOS(tt.path, "windows", tt.allowSystemDirs)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validatePathSecurityOS(%q, \"windows\") error = %v, wantErr %v", tt.path, err, tt.wantErr)
+				t.Errorf("validatePathSecurityOS(%q, \"windows\", %v) error = %v, wantErr %v", tt.path, tt.allowSystemDirs, err, tt.wantErr)
 			}
 		}
 	})
