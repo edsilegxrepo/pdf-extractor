@@ -1,4 +1,4 @@
-# go-pdf-extractor Architecture Document
+# pdf-extractor Architecture Document
 
 ## 1. Architecture and Design Choices
 
@@ -416,8 +416,8 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph Application["go-pdf-extractor"]
-        subgraph cmd["cmd/go-pdf-extractor"]
+    subgraph Application["pdf-extractor"]
+        subgraph cmd["cmd/pdf-extractor"]
             MAIN[main.go]
         end
         subgraph pkg["pkg/extractor"]

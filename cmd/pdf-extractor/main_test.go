@@ -26,7 +26,7 @@ func skipIfNoMutool(t *testing.T) {
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "go-pdf-extractor")
+	binPath := filepath.Join(tmpDir, "pdf-extractor")
 	if isWindows() {
 		binPath += ".exe"
 	}
@@ -400,7 +400,7 @@ func TestCLI_Version(t *testing.T) {
 		t.Fatalf("version flag failed: %v", err)
 	}
 
-	if !strings.Contains(string(output), "go-pdf-extractor version") {
+	if !strings.Contains(string(output), "pdf-extractor version") {
 		t.Errorf("expected version output, got: %s", output)
 	}
 }

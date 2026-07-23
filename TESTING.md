@@ -1,4 +1,4 @@
-# go-pdf-extractor Test Plan
+# pdf-extractor Test Plan
 
 ## 1. Unit Tests
 
@@ -126,8 +126,8 @@ mutool draw -q -F txt -o - testdata/*.pdf | grep 'DSFN:'
 Tests are organized by package:
 
 ```
-go-pdf-extractor/
-├── cmd/go-pdf-extractor/
+pdf-extractor/
+├── cmd/pdf-extractor/
 │   └── main_test.go         # CLI integration tests
 ├── pkg/extractor/
 │   └── extractor_test.go    # Library unit + integration tests
@@ -178,7 +178,7 @@ go-pdf-extractor/
 | `TestProcessFiles_Empty` | Empty input returns empty |
 | `TestResultTypes` | String, []string, nil values |
 
-### CLI Integration Tests (cmd/go-pdf-extractor)
+### CLI Integration Tests (cmd/pdf-extractor)
 
 | Test | Coverage |
 |------|----------|
@@ -419,6 +419,6 @@ Note: `main()` and `parseFlags()` are tested via helper subprocess execution tes
 
 Tests must use a temporary ephemeral workspace:
 
-- **Location**: `{TEMP}/unittests/go-pdf-extractor_{YYYYMMDDhhmmss}`, Timestamped directory prevents collisions between parallel test runs
+- **Location**: `{TEMP}/unittests/pdf-extractor_{YYYYMMDDhhmmss}`, Timestamped directory prevents collisions between parallel test runs
 - **Cleanup**: Purged automatically after test execution by default
 - **Preservation**: Set `KEEP_TEST_WORKSPACE=1` environment variable to preserve workspace for debugging. Auto-cleanup is set by default.

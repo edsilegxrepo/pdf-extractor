@@ -1,10 +1,10 @@
-# go-pdf-extractor Design Document
+# pdf-extractor Design Document
 
 ## 1. Overview
 
 ### 1.1 Purpose
 
-go-pdf-extractor is a command-line utility that extracts delimiter-based values from PDF files using the MuPDF `mutool` binary. The tool processes batches of PDF files concurrently and outputs structured data in JSON or TSV format.
+pdf-extractor is a command-line utility that extracts delimiter-based values from PDF files using the MuPDF `mutool` binary. The tool processes batches of PDF files concurrently and outputs structured data in JSON or TSV format.
 
 ### 1.2 Business Requirements
 
@@ -26,7 +26,7 @@ The application addresses the following business needs:
 
 ### 2.1 Primary Use Case: DocuSign Document Routing
 
-**Actors**: GoAnywhere MFT, go-pdf-extractor, Nuxeo ECM
+**Actors**: GoAnywhere MFT, pdf-extractor, Nuxeo ECM
 
 **Preconditions**:
 - Signed PDF files have been deposited in a GoAnywhere workspace directory
@@ -36,8 +36,8 @@ The application addresses the following business needs:
 **Flow**:
 1. GoAnywhere receives one or more signed PDF files from DocuSign
 2. GoAnywhere creates a uniquely-named workspace directory
-3. GoAnywhere invokes go-pdf-extractor with the workspace path and output parameters
-4. go-pdf-extractor extracts routing values from all PDFs and writes results to the output file
+3. GoAnywhere invokes pdf-extractor with the workspace path and output parameters
+4. pdf-extractor extracts routing values from all PDFs and writes results to the output file
 5. GoAnywhere parses the output file to determine routing rules for each document
 6. Documents are routed to appropriate Nuxeo ECM destinations based on extracted values
 7. Workspace directory is destroyed after processing completes
@@ -51,7 +51,7 @@ The application addresses the following business needs:
 **Purpose**: Validate that a set of PDFs contain expected routing identifiers before processing.
 
 **Flow**:
-1. Operator invokes go-pdf-extractor with `-format tsv` for human-readable output
+1. Operator invokes pdf-extractor with `-format tsv` for human-readable output
 2. Output is reviewed to identify documents with missing or unexpected values
 3. Documents with `null` values are flagged for manual review
 
@@ -61,7 +61,7 @@ The application addresses the following business needs:
 
 **Flow**:
 1. Operator specifies custom `-search` pattern (e.g., `Invoice:`, `PO:`, `REF:`)
-2. go-pdf-extractor extracts values following the specified delimiter
+2. pdf-extractor extracts values following the specified delimiter
 3. Results are processed according to the custom pattern requirements
 
 ## 3. Integration Context
@@ -79,7 +79,7 @@ flowchart LR
     end
 
     subgraph Processing["PDF Processing"]
-        EXTRACT[go-pdf-extractor]
+        EXTRACT[pdf-extractor]
         MUTOOL[mutool]
     end
 

@@ -1,4 +1,4 @@
-// Package main provides the CLI for go-pdf-extractor.
+// Package main provides the CLI for pdf-extractor.
 package main
 
 import (
@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"criticalsys.net/go-pdf-extractor/pkg/extractor"
+	"criticalsys.net/pdf-extractor/pkg/extractor"
 )
 
 var version = "dev"
@@ -34,7 +34,7 @@ const (
 func main() {
 	cfg, showVersion := parseFlags()
 	if showVersion {
-		fmt.Printf("go-pdf-extractor version %s\n", version)
+		fmt.Printf("pdf-extractor version %s\n", version)
 		os.Exit(0)
 	}
 
@@ -278,7 +278,7 @@ func testOutputWritable(outputPath string) error {
 
 func writeOutput(results []extractor.Result, format, outputPath string) error {
 	outputDir := filepath.Dir(outputPath)
-	tempFile, err := os.CreateTemp(outputDir, ".go-pdf-extractor-*.tmp")
+	tempFile, err := os.CreateTemp(outputDir, ".pdf-extractor-*.tmp")
 	if err != nil {
 		return fmt.Errorf("cannot create temp file: %v", err)
 	}

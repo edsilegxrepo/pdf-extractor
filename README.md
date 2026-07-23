@@ -1,4 +1,4 @@
-# go-pdf-extractor
+# pdf-extractor
 
 A command-line utility for extracting delimiter-based values from PDF files using MuPDF's mutool.
 
@@ -6,7 +6,7 @@ A command-line utility for extracting delimiter-based values from PDF files usin
 
 ### 1.1 Purpose
 
-go-pdf-extractor processes batches of PDF files to extract text values that follow a specified delimiter pattern. The tool is designed for integration with workflow orchestration platforms such as GoAnywhere MFT to enable content-based document routing.
+pdf-extractor processes batches of PDF files to extract text values that follow a specified delimiter pattern. The tool is designed for integration with workflow orchestration platforms such as GoAnywhere MFT to enable content-based document routing.
 
 ### 1.2 Objectives
 
@@ -216,7 +216,7 @@ See [TESTING.md](TESTING.md) for detailed test documentation.
 ### 4.1 Synopsis
 
 ```
-go-pdf-extractor [OPTIONS]
+pdf-extractor [OPTIONS]
 ```
 
 ### 4.2 Required Arguments
@@ -317,7 +317,7 @@ doc1.pdf	value1|value2
 Extract DSFN values from all PDFs in a workspace:
 
 ```bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace/batch001 \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -337,7 +337,7 @@ go-pdf-extractor \
 Generate human-readable TSV output:
 
 ```bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -358,7 +358,7 @@ document3.pdf
 Limit concurrency on resource-constrained systems:
 
 ```bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -372,7 +372,7 @@ go-pdf-extractor \
 Process large or complex PDFs:
 
 ```bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/large_documents \
   -file-pattern "report_*.pdf" \
   -search "Reference:" \
@@ -386,7 +386,7 @@ go-pdf-extractor \
 Use a specific mutool installation:
 
 ```bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -398,7 +398,7 @@ go-pdf-extractor \
 ### 5.6 Windows PowerShell
 
 ```powershell
-.\go-pdf-extractor.exe `
+.\pdf-extractor.exe `
   -path "D:\Data\Workspace\batch001" `
   -file-pattern "*.pdf" `
   -search "DSFN:" `
@@ -411,7 +411,7 @@ go-pdf-extractor \
 ```bash
 export MUTOOL_BIN=/var/opt/bin/mutool
 
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -424,7 +424,7 @@ go-pdf-extractor \
 Parse JSON output for specific values:
 
 ```bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -437,7 +437,7 @@ go-pdf-extractor \
 Validate all prerequisites before processing with `-detect`:
 
 ```bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace/batch001 \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -476,7 +476,7 @@ The `-detect` flag is useful for:
 
 ```bash
 #!/bin/bash
-go-pdf-extractor \
+pdf-extractor \
   -path /data/workspace \
   -file-pattern "*.pdf" \
   -search "DSFN:" \
@@ -509,27 +509,27 @@ esac
 
 ```bash
 # Clone repository
-git clone https://github.com/<owner>/go-pdf-extractor
-cd go-pdf-extractor
+git clone https://github.com/<owner>/pdf-extractor
+cd pdf-extractor
 
 # Build for current platform (development)
-go build -o go-pdf-extractor ./cmd/go-pdf-extractor/
+go build -o pdf-extractor ./cmd/pdf-extractor/
 
 # Build with version information (release)
-go build -ldflags "-s -w -X main.version=1.0.0" -trimpath -buildmode=pie -o go-pdf-extractor ./cmd/go-pdf-extractor/
+go build -ldflags "-s -w -X main.version=1.0.0" -trimpath -buildmode=pie -o pdf-extractor ./cmd/pdf-extractor/
 
 # Cross-compile for Linux
-GOOS=linux GOARCH=amd64 go build -o go-pdf-extractor-linux ./cmd/go-pdf-extractor/
+GOOS=linux GOARCH=amd64 go build -o pdf-extractor-linux ./cmd/pdf-extractor/
 
 # Cross-compile for Windows
-GOOS=windows GOARCH=amd64 go build -o go-pdf-extractor.exe ./cmd/go-pdf-extractor/
+GOOS=windows GOARCH=amd64 go build -o pdf-extractor.exe ./cmd/pdf-extractor/
 ```
 
 ### 6.3 Project Structure
 
 ```
-go-pdf-extractor/
-├── cmd/go-pdf-extractor/    # CLI entry point
+pdf-extractor/
+├── cmd/pdf-extractor/    # CLI entry point
 │   └── main.go
 ├── pkg/extractor/           # Library API (importable)
 │   ├── types.go             # Options, Result types
@@ -546,7 +546,7 @@ go-pdf-extractor/
 Other Go projects can import the extraction library directly:
 
 ```go
-import "criticalsys.net/go-pdf-extractor/pkg/extractor"
+import "criticalsys.net/pdf-extractor/pkg/extractor"
 
 results, err := extractor.Extract(ctx, extractor.Options{
     Path:        "/data/pdfs",
@@ -581,11 +581,11 @@ sudo apt-get install mupdf-tools
 # Verify mutool installation
 mutool -v
 
-# Verify go-pdf-extractor version
-./go-pdf-extractor -version
+# Verify pdf-extractor version
+./pdf-extractor -version
 
-# Verify go-pdf-extractor help
-./go-pdf-extractor -h
+# Verify pdf-extractor help
+./pdf-extractor -h
 
 # Test with sample file
 echo "Test DSFN:12345" | mutool draw -q -F txt -o - /dev/stdin
@@ -593,10 +593,10 @@ echo "Test DSFN:12345" | mutool draw -q -F txt -o - /dev/stdin
 
 ### 6.7 GoAnywhere MFT Integration
 
-1. Deploy `go-pdf-extractor` binary to accessible location on GoAnywhere server
+1. Deploy `pdf-extractor` binary to accessible location on GoAnywhere server
 2. Configure mutool path via `MUTOOL_BIN` environment variable or workflow parameter
 3. Create workflow with Execute Command task:
-   - Command: `/path/to/go-pdf-extractor`
+   - Command: `/path/to/pdf-extractor`
    - Arguments: `-path "${workspace}" -file-pattern "*.pdf" -search "DSFN:" -format json -output "${workspace}/routing.json"`
    Note: use folder variables instead of hardcoded values.
    > [!IMPORTANT]

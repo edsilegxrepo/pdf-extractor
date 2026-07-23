@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Refactored project structure to support both CLI and library usage
-- CLI moved to `cmd/go-pdf-extractor/`
+- CLI moved to `cmd/pdf-extractor/`
 - Core logic moved to `pkg/extractor/`
 - Platform-specific process management moved to `pkg/extractor/`
 
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Zero functionality loss - all CLI behavior unchanged
 - No performance impact - compile-time reorganization only
-- External projects can now import `criticalsys.net/go-pdf-extractor/pkg/extractor`
+- External projects can now import `criticalsys.net/pdf-extractor/pkg/extractor`
 
 ## [0.1.0] - 2026-07-16
 
