@@ -513,19 +513,50 @@ git clone https://github.com/<owner>/go-pdf-extractor
 cd go-pdf-extractor
 
 # Build for current platform (development)
-go build -o ../bin/go-pdf-extractor ./...
+go build -o go-pdf-extractor ./cmd/go-pdf-extractor/
 
 # Build with version information (release)
-go build -ldflags "-s -w -X main.version=1.0.0" -trimpath -buildmode=pie -o ../bin/go-pdf-extractor ./...
+go build -ldflags "-s -w -X main.version=1.0.0" -trimpath -buildmode=pie -o go-pdf-extractor ./cmd/go-pdf-extractor/
 
 # Cross-compile for Linux
-GOOS=linux
+GOOS=linux GOARCH=amd64 go build -o go-pdf-extractor-linux ./cmd/go-pdf-extractor/
 
 # Cross-compile for Windows
-GOOS=windows
+GOOS=windows GOARCH=amd64 go build -o go-pdf-extractor.exe ./cmd/go-pdf-extractor/
 ```
 
-### 6.3 Installing mutool
+### 6.3 Project Structure
+
+```
+go-pdf-extractor/
+├── cmd/go-pdf-extractor/    # CLI entry point
+│   └── main.go
+├── pkg/extractor/           # Library API (importable)
+│   ├── types.go             # Options, Result types
+│   ├── extractor.go         # Extract() function
+│   ├── path.go              # Path sanitization
+│   ├── mutool.go            # Mutool discovery
+│   ├── process_unix.go      # Unix process groups
+│   └── process_windows.go   # Windows process groups
+└── go.mod
+```
+
+### 6.4 Library Usage
+
+Other Go projects can import the extraction library directly:
+
+```go
+import "criticalsys.net/go-pdf-extractor/pkg/extractor"
+
+results, err := extractor.Extract(ctx, extractor.Options{
+    Path:        "/data/pdfs",
+    FilePattern: "*.pdf",
+    Search:      "DSFN:",
+    Timeout:     30 * time.Second,
+})
+```
+
+### 6.5 Installing mutool
 
 **Linux (RHEL/CentOS)**:
 ```bash
@@ -544,7 +575,7 @@ sudo apt-get install mupdf-tools
 2. Extract to desired location (e.g., `C:\Program Files\mupdf`)
 3. Add to PATH or configure `MUTOOL_BIN` environment variable
 
-### 6.4 Verification
+### 6.6 Verification
 
 ```bash
 # Verify mutool installation
@@ -560,7 +591,7 @@ mutool -v
 echo "Test DSFN:12345" | mutool draw -q -F txt -o - /dev/stdin
 ```
 
-### 6.5 GoAnywhere MFT Integration
+### 6.7 GoAnywhere MFT Integration
 
 1. Deploy `go-pdf-extractor` binary to accessible location on GoAnywhere server
 2. Configure mutool path via `MUTOOL_BIN` environment variable or workflow parameter

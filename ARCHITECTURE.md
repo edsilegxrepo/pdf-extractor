@@ -99,8 +99,8 @@ flowchart TB
 - Compiler excludes irrelevant code from each platform build
 
 **Implementation**:
-- `process_windows.go`: Uses `CREATE_NEW_PROCESS_GROUP` flag
-- `process_unix.go`: Uses `Setpgid` and negative PID signals
+- `pkg/extractor/process_windows.go`: Uses `CREATE_NEW_PROCESS_GROUP` flag
+- `pkg/extractor/process_unix.go`: Uses `Setpgid` and negative PID signals
 
 ### 1.3 Assumptions
 
@@ -204,58 +204,58 @@ flowchart TD
 
 ```mermaid
 classDiagram
-    class main {
-        +main()
-    }
-    class Config {
-        +Path string
-        +FilePattern string
-        +Search string
-        +Format string
-        +Output string
-        +MutoolBin string
-        +Timeout Duration
-        +Workers int
-    }
-    class Result {
-        +Filename string
-        +Value interface
-        +Error string
+    namespace cmd_go_pdf_extractor {
+        class main {
+            +main()
+            +run(cfg) int, error
+            +parseFlags() cliConfig, bool
+            +writeOutput(results, format, path) error
+        }
+        class cliConfig {
+            +path string
+            +filePattern string
+            +search string
+            +format string
+            +output string
+            +mutoolBin string
+            +timeout Duration
+            +workers int
+            +detect bool
+        }
     }
     
-    main --> parseFlags : creates
-    main --> run : invokes
-    parseFlags --> Config : returns
-    run --> validateConfig : validates
-    run --> findMutool : locates binary
-    run --> findFiles : discovers PDFs
-    run --> processFiles : concurrent processing
-    run --> writeOutput : writes results
-    
-    validateConfig --> sanitizePath : path validation
-    findMutool --> validateMutoolPath : binary validation
-    validateMutoolPath --> sanitizePath : path cleaning
-    validateMutoolPath --> validateExecutable : executable check
-    
-    processFiles --> processFile : per-file processing
-    processFile --> setupProcessGroup : OS-specific
-    processFile --> killProcessGroup : OS-specific
-    processFile --> extractValues : pattern matching
-    processFile --> Result : produces
-    
-    writeOutput --> writeJSON : JSON format
-    writeOutput --> writeNDJSON : NDJSON format
-    writeOutput --> writeTSV : TSV format
-
-    class sanitizePath {
-        +sanitizePath(path) string, error
+    namespace pkg_extractor {
+        class Options {
+            +Path string
+            +FilePattern string
+            +Search string
+            +MutoolBin string
+            +Timeout Duration
+            +Workers int
+        }
+        class Result {
+            +Filename string
+            +Value interface
+            +Error string
+        }
+        class extractor {
+            +Extract(ctx, opts) []Result, error
+            +FindMutool(path) string, error
+            +FindFiles(basePath, pattern) []string, error
+            +SanitizePath(path) string, error
+            +ValidateExecutable(path) error
+        }
     }
-    class validateExecutable {
-        +validateExecutable(path) error
-    }
-    class validateMutoolPath {
-        +validateMutoolPath(path, source) string, error
-    }
+    
+    main --> cliConfig : parses into
+    main --> extractor : calls Extract()
+    main --> Result : receives
+    
+    extractor --> Options : accepts
+    extractor --> Result : produces
+    extractor --> SanitizePath : validates paths
+    extractor --> FindMutool : locates binary
+    extractor --> FindFiles : discovers PDFs
 ```
 
 ### 2.3 Data Sequence
@@ -410,16 +410,24 @@ sequenceDiagram
 | Resource | Purpose |
 |----------|---------|
 | mutool | Integration tests require functional mutool |
-| testfiles/*.pdf | Sample PDF files for functional testing |
+| testdata/*.pdf | Sample PDF files for functional testing |
 
 ### 3.6 Dependency Graph
 
 ```mermaid
 flowchart LR
     subgraph Application["go-pdf-extractor"]
-        MAIN[go-pdf-extractor.go]
-        PROC_WIN[process_windows.go]
-        PROC_UNIX[process_unix.go]
+        subgraph cmd["cmd/go-pdf-extractor"]
+            MAIN[main.go]
+        end
+        subgraph pkg["pkg/extractor"]
+            EXTRACTOR[extractor.go]
+            TYPES[types.go]
+            PATH[path.go]
+            MUTOOL_GO[mutool.go]
+            PROC_WIN[process_windows.go]
+            PROC_UNIX[process_unix.go]
+        end
     end
 
     subgraph GoStdLib["Go Standard Library"]
@@ -443,9 +451,11 @@ flowchart LR
         MUPDF[MuPDF library]
     end
 
-    MAIN --> BUFIO & CONTEXT & JSON & FLAG & FMT
-    MAIN --> OS & EXEC & FILEPATH & RUNTIME
-    MAIN --> STRINGS & SYNC & TIME
+    MAIN --> pkg
+    MAIN --> BUFIO & JSON & FLAG & FMT & OS & FILEPATH & RUNTIME & STRINGS & TIME
+    EXTRACTOR --> CONTEXT & EXEC & FILEPATH & RUNTIME & STRINGS & SYNC & TIME
+    PATH --> FMT & OS & FILEPATH & RUNTIME & STRINGS
+    MUTOOL_GO --> CONTEXT & EXEC & OS & STRINGS & TIME
     PROC_WIN --> EXEC & SYSCALL
     PROC_UNIX --> EXEC & SYSCALL
     EXEC --> MUTOOL

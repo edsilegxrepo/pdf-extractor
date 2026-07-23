@@ -100,7 +100,7 @@
 ## 6. End-to-End Tests
 
 ### GoAnywhere Simulation
-- Full workflow using real PDFs from `testfiles/*.pdf`
+- Full workflow using real PDFs from `testdata/*.pdf`
 - Invoke binary with all required flags
 - Verify output file is created and contains expected data
 
@@ -113,17 +113,95 @@
 
 ### Test Data Location
 ```
-testfiles/*.pdf
+testdata/*.pdf
 ```
 
 ### Manual Test Command
 ```bash
-mutool draw -q -F txt -o - testfiles/*.pdf | grep 'DSFN:'
+mutool draw -q -F txt -o - testdata/*.pdf | grep 'DSFN:'
 ```
 
-## 7. Implemented Tests
+## 7. Test Structure
 
-Total: **118+ tests** covering all functionality.
+Tests are organized by package:
+
+```
+go-pdf-extractor/
+├── cmd/go-pdf-extractor/
+│   └── main_test.go         # CLI integration tests
+├── pkg/extractor/
+│   └── extractor_test.go    # Library unit + integration tests
+└── testdata/               # Test PDF files
+    ├── sample001.pdf        # DSFN:value (no space)
+    ├── sample002.pdf        # DSFN: value (with space)
+    ├── multi-match.pdf      # Multiple DSFN values
+    ├── no-match.pdf         # No DSFN pattern
+    ├── empty.pdf            # Blank PDF
+    ├── duplicate-values.pdf # Deduplication test
+    ├── whitespace-variations.pdf
+    ├── unicode-value.pdf    # Special characters
+    ├── long-value.pdf       # Long filename
+    └── different-delimiter.pdf  # REF:, ID:, DOC_NUM:
+```
+
+### Library Tests (pkg/extractor)
+
+| Test | Coverage |
+|------|----------|
+| `TestExtractValues` | Pattern matching: single/multiple matches, spaces, deduplication, line endings |
+| `TestExtractValues_EdgeCases` | Empty text, empty search, unicode, special chars |
+| `TestSanitizePath` | Empty path, path traversal, relative paths |
+| `TestSanitizeExecutablePath` | System dirs allowed, traversal rejected |
+| `TestValidatePathSecurityOS` | Unix/Windows path security rules |
+| `TestFindFiles` | Glob matching, no matches, path traversal rejection |
+| `TestValidateExecutable` | Directory rejection, non-existent files, Windows extension check |
+| `TestValidateDirectory` | Valid dir, non-existent, file not dir |
+| `TestFindMutool` | PATH lookup, explicit path, invalid path |
+| `TestTestMutoolExecution` | Valid mutool, invalid binary |
+| `TestExtract_SingleFile` | sample001.pdf, sample002.pdf extraction |
+| `TestExtract_BatchProcessing` | Concurrent processing of multiple files |
+| `TestExtract_NoMatch` | Search pattern not found |
+| `TestExtract_InvalidPath` | Non-existent workspace |
+| `TestExtract_NoMatchingFiles` | No files match pattern |
+| `TestExtract_DefaultTimeout` | Zero timeout uses default |
+| `TestExtract_Errors` | Empty path, traversal, relative path |
+| `TestExtract_MultiMatch` | Multiple values in one file |
+| `TestExtract_NoMatchFile` | no-match.pdf returns nil |
+| `TestExtract_EmptyFile` | empty.pdf returns nil |
+| `TestExtract_DuplicateValues` | Deduplication works |
+| `TestExtract_WhitespaceVariations` | Trimming works |
+| `TestExtract_LongValue` | Long filename extracted |
+| `TestExtract_UnicodeValue` | Special chars preserved |
+| `TestExtract_DifferentDelimiter` | REF:, ID:, DOC_NUM: patterns |
+| `TestExtract_AllTestFiles` | All 10 PDFs processed |
+| `TestProcessFiles_WorkerBounds` | min=2, max=16, default=NumCPU*2 |
+| `TestProcessFiles_Empty` | Empty input returns empty |
+| `TestResultTypes` | String, []string, nil values |
+
+### CLI Integration Tests (cmd/go-pdf-extractor)
+
+| Test | Coverage |
+|------|----------|
+| `TestCLI_JSONOutput` | JSON array format, correct values |
+| `TestCLI_NDJSONOutput` | NDJSON format, line count |
+| `TestCLI_TSVOutput` | TSV header + data rows |
+| `TestCLI_DetectMode_Success` | All prerequisite checks pass |
+| `TestCLI_DetectMode_PathNotFound` | Exit code 3 |
+| `TestCLI_DetectMode_NoMatchingFiles` | Exit code 6 |
+| `TestCLI_DetectMode_SearchNotFound` | Exit code 7 |
+| `TestCLI_ExitCode_Success` | Exit code 0 |
+| `TestCLI_ExitCode_MissingRequiredFlag` | Exit code 1 |
+| `TestCLI_ExitCode_InvalidPath` | Exit code 3 |
+| `TestCLI_ExitCode_NoFilesFound` | Exit code 6 |
+| `TestCLI_Version` | Version output |
+| `TestCLI_WorkersFlag` | Workers 1, 4, 8, 20 |
+| `TestCLI_TimeoutFlag` | Custom timeout |
+| `TestCLI_SpecificFilePattern` | Single file pattern |
+| `TestCLI_NoMatchReturnsNullValues` | Null for no matches |
+
+## 8. Legacy Test Reference
+
+The following tests were in the original monolithic test file before refactoring.
 
 ### Unit Tests (always run)
 
@@ -158,7 +236,7 @@ Total: **118+ tests** covering all functionality.
 |------|-------------|-----------------|
 | `TestIntegration_SingleFileWithMatch` | Process sample001.pdf | Extracts `Employee ID_X_X_X_X_Eag-AHP.pdf` from `DSFN:Employee ID_X_X_X_X_Eag-AHP.pdf` |
 | `TestIntegration_SingleFileWithSpaceAfterDelimiter` | Process sample002.pdf | Extracts `327078_X_X_X_X_Wage.pdf` from `DSFN: 327078_X_X_X_X_Wage.pdf` |
-| `TestIntegration_BatchProcessing` | Process all testfiles PDFs concurrently | Both files processed, 2 matches found |
+| `TestIntegration_BatchProcessing` | Process all testdata PDFs concurrently | Both files processed, 2 matches found |
 | `TestIntegration_JSONOutput` | Write results to JSON file | Valid standard JSON array |
 | `TestIntegration_NDJSONOutput` | Write results to NDJSON file | Valid NDJSON with correct line count |
 | `TestIntegration_TSVOutput` | Write results to TSV file | Valid TSV with header and data rows |
@@ -255,6 +333,9 @@ Total: **118+ tests** covering all functionality.
 # Run all tests (unit + integration)
 go test -v ./...
 
+# Run library package tests only
+go test -v ./pkg/extractor/...
+
 # Run only unit tests (skip integration)
 go test -v -short ./...
 
@@ -283,14 +364,17 @@ The Go race detector uses thread instrumentation which requires **CGO** (`CGO_EN
 If the Go toolchain fails to locate your C compiler, or if multiple compilers are installed, explicitly specify the compiler path using the **`CC`** environment variable (e.g., `$env:CC="gcc"` or `$env:CC="x86_64-w64-mingw32-gcc"` in Windows PowerShell, or `export CC=gcc` in Unix shells).
 
 
-## 8. Code Coverage
+## 9. Code Coverage
 
 **Total coverage: 88.5%** (target: 80%)
 
 ### Calculating Coverage
 
 ```bash
-# Generate coverage report (writes to temp, auto-cleanup)
+# Generate coverage report for library package
+go test -coverprofile=$TEMP/coverage.out ./pkg/extractor/... && go tool cover -func=$TEMP/coverage.out && rm -f $TEMP/coverage.out
+
+# Generate coverage report for all packages
 go test -coverprofile=$TEMP/coverage.out ./... && go tool cover -func=$TEMP/coverage.out && rm -f $TEMP/coverage.out
 
 # Windows PowerShell equivalent
@@ -329,7 +413,7 @@ go test -coverprofile=$env:TEMP/coverage.out ./...; go tool cover -func=$env:TEM
 
 Note: `main()` and `parseFlags()` are tested via helper subprocess execution tests in the test suite to achieve validation. `validatePathSecurityExt` has 100.0% coverage by separating target OS validation into a mockable `validatePathSecurityOS` helper function.
 
-## 9. Test Workspace Requirements
+## 10. Test Workspace Requirements
 
 ### Ephemeral Workspace
 
