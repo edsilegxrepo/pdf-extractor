@@ -56,7 +56,7 @@ func validatePathSecurityExt(absPath string, allowSystemDirs bool) error {
 	return validatePathSecurityOS(absPath, runtime.GOOS, allowSystemDirs)
 }
 
-func validatePathSecurityOS(absPath string, goos string, allowSystemDirs bool) error {
+func validatePathSecurityOS(absPath, goos string, allowSystemDirs bool) error {
 	normalized := filepath.Clean(absPath)
 
 	if goos == "windows" {
